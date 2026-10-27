@@ -30,18 +30,31 @@ public sealed class Preset
 
 public sealed class AutoSwitchRule
 {
-    public bool Enabled { get; set; }
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "新游戏";
+    public bool Enabled { get; set; } = true;
     public string ExecutablePath { get; set; } = "";
     public Guid? RunningPresetId { get; set; }
     public Guid? StoppedPresetId { get; set; }
     public AutoSwitchRule Copy() => (AutoSwitchRule)MemberwiseClone();
 }
 
+public sealed class AutoSwitchSettings
+{
+    public bool Enabled { get; set; }
+    public List<AutoSwitchRule> Rules { get; set; } = [];
+    public AutoSwitchSettings Copy() => new()
+    {
+        Enabled = Enabled,
+        Rules = Rules.Select(rule => rule.Copy()).ToList()
+    };
+}
+
 public sealed class AppConfig
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public List<Preset> Presets { get; set; } = [];
-    public AutoSwitchRule AutoSwitch { get; set; } = new();
+    public AutoSwitchSettings AutoSwitch { get; set; } = new();
     public AppConfig Copy() => new()
     {
         Version = Version,

@@ -6,7 +6,172 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ResolutionAssistant;
 
-internal sealed record ProcessObservation(bool? IsRunning, string Message);
+internal sealed record AutomationObservation(bool? IsRunning, string Message, Guid? ActiveRuleId);
+internal sealed record AutomationTransition(Guid RuleId, bool Running);
+internal sealed record AutomationEvaluation(AutomationObservation Observation, AutomationTransition? Transition);
+
+// Immutable, precomputed configuration shared by the UI evaluator and one background scan.
+internal sealed class AutomationScanPlan
+{
+    private readonly AutomationRule[] allRules;
+    private readonly Dictionary<Guid, AutomationRule> rulesById = [];
+    private readonly Dictionary<string, AutomationCandidateGroup> candidates = new(StringComparer.OrdinalIgnoreCase);
+
+    public static AutomationScanPlan Empty { get; } = new(new AutoSwitchSettings());
+    public bool Enabled { get; }
+    public AutomationRule[] Rules { get; }
+    public bool CanScan => Enabled && Rules.Length != 0;
+
+    public AutomationScanPlan(AutoSwitchSettings settings)
+    {
+        Enabled = settings.Enabled;
+        allRules = settings.Rules.Select(rule => new AutomationRule(rule)).ToArray();
+        Rules = allRules.Where(rule => rule.Enabled).ToArray();
+        var groups = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < Rules.Length; index++)
+        {
+            var rule = Rules[index];
+            rulesById.Add(rule.Id, rule);
+            if (rule.FullPath is null) continue;
+            var fileName = Path.GetFileName(rule.FullPath);
+            if (!groups.TryGetValue(fileName, out var indexes))
+                groups.Add(fileName, indexes = []);
+            indexes.Add(index);
+        }
+        foreach (var (fileName, indexes) in groups)
+            candidates.Add(fileName, new AutomationCandidateGroup(indexes.ToArray(), Rules));
+    }
+
+    public bool Matches(AutoSwitchSettings settings)
+    {
+        if (Enabled != settings.Enabled || allRules.Length != settings.Rules.Count) return false;
+        for (var index = 0; index < allRules.Length; index++)
+            if (!allRules[index].Matches(settings.Rules[index])) return false;
+        return true;
+    }
+
+    public AutomationRule? FindRule(Guid? id) =>
+        id is Guid value ? rulesById.GetValueOrDefault(value) : null;
+
+    public bool TryGetCandidates(string fileName, out AutomationCandidateGroup group) =>
+        candidates.TryGetValue(fileName, out group!);
+
+    internal static string? NormalizePath(string path)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(path);
+            return Path.GetFileName(fullPath).Length == 0 ? null : fullPath;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or IOException or
+            UnauthorizedAccessException or SecurityException)
+        {
+            return null;
+        }
+    }
+}
+
+internal sealed class AutomationRule
+{
+    private readonly string executablePath;
+    public Guid Id { get; }
+    public string Name { get; }
+    public bool Enabled { get; }
+    public string? FullPath { get; }
+    public Guid? RunningPresetId { get; }
+    public Guid? StoppedPresetId { get; }
+
+    public AutomationRule(AutoSwitchRule rule)
+    {
+        Id = rule.Id;
+        Name = rule.Name;
+        Enabled = rule.Enabled;
+        executablePath = rule.ExecutablePath;
+        FullPath = AutomationScanPlan.NormalizePath(executablePath);
+        RunningPresetId = rule.RunningPresetId;
+        StoppedPresetId = rule.StoppedPresetId;
+    }
+
+    public bool Matches(AutoSwitchRule rule) => Id == rule.Id && Name == rule.Name && Enabled == rule.Enabled &&
+        string.Equals(executablePath, rule.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
+        RunningPresetId == rule.RunningPresetId && StoppedPresetId == rule.StoppedPresetId;
+}
+
+internal sealed class AutomationCandidateGroup
+{
+    private readonly Dictionary<string, int[]> paths = new(StringComparer.OrdinalIgnoreCase);
+    public int[] Indexes { get; }
+
+    public AutomationCandidateGroup(int[] indexes, AutomationRule[] rules)
+    {
+        Indexes = indexes;
+        var pathIndexes = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var index in indexes)
+        {
+            var path = rules[index].FullPath!;
+            if (!pathIndexes.TryGetValue(path, out var matches))
+                pathIndexes.Add(path, matches = []);
+            matches.Add(index);
+        }
+        foreach (var (path, matches) in pathIndexes) paths.Add(path, matches.ToArray());
+    }
+
+    public bool TryGetMatches(string path, out int[] indexes) => paths.TryGetValue(path, out indexes!);
+}
+
+internal sealed class AutomationScanResult(bool?[] running)
+{
+    public int Count => running.Length;
+    public bool? this[int index] => running[index];
+    public static AutomationScanResult Unknown(int count) => new(new bool?[count]);
+}
+
+// The native detector and deterministic regressions use exactly this accumulation logic.
+// One confirmed instance proves presence; other instances can never undo that evidence.
+internal sealed class ProcessScanAccumulator
+{
+    private readonly bool?[] running;
+
+    public ProcessScanAccumulator(AutomationScanPlan plan)
+    {
+        running = new bool?[plan.Rules.Length];
+        for (var index = 0; index < running.Length; index++)
+            running[index] = plan.Rules[index].FullPath is null ? null : false;
+    }
+
+    public bool AllRunning(AutomationCandidateGroup group)
+    {
+        foreach (var index in group.Indexes)
+            if (running[index] != true) return false;
+        return true;
+    }
+
+    public void ObservePath(AutomationCandidateGroup group, string path)
+    {
+        var fullPath = AutomationScanPlan.NormalizePath(path);
+        if (fullPath is null)
+        {
+            ObserveUnavailable(group);
+            return;
+        }
+        if (group.TryGetMatches(fullPath, out var indexes))
+            foreach (var index in indexes) running[index] = true;
+    }
+
+    public void ObserveUnavailable(AutomationCandidateGroup group)
+    {
+        foreach (var index in group.Indexes)
+            if (running[index] != true) running[index] = null;
+    }
+
+    public AutomationScanResult Complete(bool enumerationComplete = true)
+    {
+        if (!enumerationComplete)
+            for (var index = 0; index < running.Length; index++)
+                if (running[index] != true) running[index] = null;
+        return new(running);
+    }
+}
 
 internal static class ProcessDetector
 {
@@ -17,24 +182,11 @@ internal static class ProcessDetector
     private const int ErrorInvalidParameter = 87;
     private const int ImagePathCapacity = 32768;
 
-    public static ProcessObservation Check(string executablePath)
+    public static AutomationScanResult Check(AutomationScanPlan plan)
     {
-        string fullPath;
-        string fileName;
-        try
-        {
-            fullPath = Path.GetFullPath(executablePath);
-            fileName = Path.GetFileName(fullPath);
-            if (fileName.Length == 0) return Unknown("可执行文件路径无效");
-        }
-        catch (Exception exception) when (IsPathError(exception))
-        {
-            return Unknown($"可执行文件路径无效：{exception.Message}");
-        }
-
         using var snapshot = CreateToolhelp32Snapshot(SnapshotProcesses, 0);
-        if (snapshot.IsInvalid)
-            return NativeError("无法获取进程列表", Marshal.GetLastWin32Error());
+        if (snapshot.IsInvalid) return AutomationScanResult.Unknown(plan.Rules.Length);
+        var accumulator = new ProcessScanAccumulator(plan);
 
         var entry = new ProcessEntry32
         {
@@ -42,79 +194,45 @@ internal static class ProcessDetector
             ExeFile = string.Empty
         };
         if (!Process32First(snapshot, ref entry))
-        {
-            var error = Marshal.GetLastWin32Error();
-            return error == ErrorNoMoreFiles
-                ? Waiting(fileName)
-                : NativeError("无法读取进程列表", error);
-        }
+            return accumulator.Complete(Marshal.GetLastWin32Error() == ErrorNoMoreFiles);
 
         StringBuilder? imagePath = null;
-        string? uncertainty = null;
         do
         {
-            // Only same-named processes need a handle or an image-path query.
-            if (!string.Equals(entry.ExeFile, fileName, StringComparison.OrdinalIgnoreCase)) continue;
-            var matches = MatchesPath(entry.ProcessId, fullPath, ref imagePath, out var error);
-            if (matches == true)
-                return new(true, $"自动切换：程序正在运行（{fileName}）");
-            if (matches is null) uncertainty ??= error;
+            // Query each interested process at most once, regardless of rule count.
+            if (!plan.TryGetCandidates(entry.ExeFile, out var group) || accumulator.AllRunning(group)) continue;
+            var result = ReadPath(entry.ProcessId, ref imagePath, out var path);
+            if (result == CandidatePathResult.Available) accumulator.ObservePath(group, path!);
+            else if (result == CandidatePathResult.Unknown) accumulator.ObserveUnavailable(group);
         }
         while (Process32Next(snapshot, ref entry));
 
-        var enumerationError = Marshal.GetLastWin32Error();
-        if (enumerationError != ErrorNoMoreFiles)
-            return NativeError("进程列表读取不完整", enumerationError);
-        return uncertainty is null ? Waiting(fileName) : Unknown(uncertainty);
+        return accumulator.Complete(Marshal.GetLastWin32Error() == ErrorNoMoreFiles);
     }
 
-    private static bool? MatchesPath(uint processId, string fullPath, ref StringBuilder? imagePath, out string? error)
+    private enum CandidatePathResult { Available, Exited, Unknown }
+
+    private static CandidatePathResult ReadPath(uint processId, ref StringBuilder? imagePath, out string? path)
     {
-        error = null;
+        path = null;
         using var process = OpenProcess(QueryLimitedInformation, false, processId);
         if (process.IsInvalid)
         {
-            var nativeError = Marshal.GetLastWin32Error();
             // A snapshot can outlive a process. An inaccessible live candidate cannot be ignored.
-            if (nativeError == ErrorInvalidParameter) return false;
-            error = $"无法读取同名进程的路径：{new Win32Exception(nativeError).Message}";
-            return null;
+            return Marshal.GetLastWin32Error() == ErrorInvalidParameter
+                ? CandidatePathResult.Exited : CandidatePathResult.Unknown;
         }
 
         imagePath ??= new StringBuilder(ImagePathCapacity);
         imagePath.Clear();
         var length = (uint)imagePath.Capacity;
         if (!QueryFullProcessImageName(process, 0, imagePath, ref length))
-        {
-            var nativeError = Marshal.GetLastWin32Error();
-            if (GetExitCodeProcess(process, out var exitCode) && exitCode != StillActive) return false;
-            error = $"无法读取同名进程的路径：{new Win32Exception(nativeError).Message}";
-            return null;
-        }
+            return GetExitCodeProcess(process, out var exitCode) && exitCode != StillActive
+                ? CandidatePathResult.Exited : CandidatePathResult.Unknown;
 
-        try
-        {
-            var candidatePath = Path.GetFullPath(imagePath.ToString());
-            return string.Equals(candidatePath, fullPath, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception exception) when (IsPathError(exception))
-        {
-            error = $"同名进程的路径无法识别：{exception.Message}";
-            return null;
-        }
+        path = imagePath.ToString();
+        return CandidatePathResult.Available;
     }
-
-    private static bool IsPathError(Exception exception) =>
-        exception is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException or SecurityException;
-
-    private static ProcessObservation Waiting(string fileName) =>
-        new(false, $"自动切换：等待程序启动（{fileName}）");
-
-    private static ProcessObservation Unknown(string reason) =>
-        new(null, $"自动切换：检测异常，暂不切换（{reason}）");
-
-    private static ProcessObservation NativeError(string reason, int error) =>
-        Unknown($"{reason}：{new Win32Exception(error).Message}");
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct ProcessEntry32
@@ -165,21 +283,104 @@ internal static class ProcessDetector
     private static extern bool CloseHandle(IntPtr handle);
 }
 
+// UI-thread-owned state machine. Unknown or obsolete scans never mutate effective state.
+internal sealed class AutomationStateEvaluator
+{
+    private Guid? effectiveRuleId;
+    private string? effectivePath;
+    private bool effectiveRunning;
+    private Guid? appliedPresetId;
+
+    public AutomationScanPlan Plan { get; private set; } = AutomationScanPlan.Empty;
+    public int Generation { get; private set; }
+    private Guid? ActiveRuleId => effectiveRunning ? effectiveRuleId : null;
+
+    public bool Configure(AutoSwitchSettings settings)
+    {
+        if (Generation != 0 && Plan.Matches(settings)) return false;
+        var next = new AutomationScanPlan(settings);
+        var retained = next.FindRule(effectiveRuleId);
+        if (!next.Enabled || retained is null ||
+            !string.Equals(effectivePath, retained.FullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            // Removing, disabling or retargeting a rule is not a process-exit event.
+            effectiveRuleId = null;
+            effectivePath = null;
+            effectiveRunning = false;
+            appliedPresetId = null;
+        }
+        Plan = next;
+        Generation++;
+        return true;
+    }
+
+    public AutomationObservation PendingObservation()
+    {
+        if (!Plan.Enabled) return new(null, "自动切换：已关闭", null);
+        if (Plan.Rules.Length == 0) return new(null, "自动切换：没有已启用的游戏规则", null);
+        var active = Plan.FindRule(ActiveRuleId);
+        return new(null, active is null ? "自动切换：等待检测游戏状态…" :
+            $"自动切换：正在检测《{active.Name}》等游戏状态…", ActiveRuleId);
+    }
+
+    public AutomationEvaluation? Evaluate(int generation, AutomationScanResult result)
+    {
+        if (generation != Generation) return null;
+        if (!Plan.CanScan) return new(PendingObservation(), null);
+        if (result.Count != Plan.Rules.Length)
+            throw new ArgumentException("检测结果与游戏规则数量不一致。", nameof(result));
+
+        // Even a lower-priority unknown target can prevent a safe all-games-exited decision.
+        // Freeze every automatic transition until all enabled targets have known states.
+        for (var index = 0; index < Plan.Rules.Length; index++)
+            if (result[index] is null)
+                return new(new(null, $"自动切换：检测《{Plan.Rules[index].Name}》状态异常，暂不切换", ActiveRuleId), null);
+
+        AutomationRule? winner = null;
+        for (var index = 0; index < Plan.Rules.Length; index++)
+            if (result[index] == true)
+            {
+                winner = Plan.Rules[index];
+                break;
+            }
+
+        AutomationTransition? transition = null;
+        if (winner is not null)
+        {
+            if (effectiveRuleId != winner.Id || !effectiveRunning || appliedPresetId != winner.RunningPresetId)
+                transition = new(winner.Id, true);
+            effectiveRuleId = winner.Id;
+            effectivePath = winner.FullPath;
+            effectiveRunning = true;
+            appliedPresetId = winner.RunningPresetId;
+            return new(new(true, $"自动切换：游戏正在运行（{winner.Name}）", winner.Id), transition);
+        }
+
+        var previous = Plan.FindRule(effectiveRuleId);
+        if (previous is not null && effectiveRunning)
+        {
+            transition = new(previous.Id, false);
+            appliedPresetId = previous.StoppedPresetId;
+        }
+        effectiveRunning = false;
+        return new(new(false, previous is null ? "自动切换：等待游戏启动" :
+            $"自动切换：等待游戏启动（上次游戏：{previous.Name}）", null), transition);
+    }
+}
+
 internal sealed class ProcessMonitor : IDisposable
 {
-    private readonly Action<ProcessObservation, bool?> report;
+    private readonly Action<AutomationObservation, AutomationTransition?> report;
     private readonly SynchronizationContext uiContext;
     private readonly int uiThreadId;
     private readonly System.Windows.Forms.Timer timer;
-    private AutoSwitchRule? rule;
-    private ProcessObservation? lastObservation;
-    private bool? lastKnownRunning;
+    private readonly AutomationStateEvaluator evaluator = new();
+    private AutomationObservation? lastObservation;
     private bool scanInProgress;
-    private int generation;
     private int disposed;
 
     // Construct on the WinForms UI thread; calls from other threads are marshalled back here.
-    public ProcessMonitor(Action<ProcessObservation, bool?> report)
+    public ProcessMonitor(Action<AutomationObservation, AutomationTransition?> report)
     {
         ArgumentNullException.ThrowIfNull(report);
         this.report = report;
@@ -189,100 +390,84 @@ internal sealed class ProcessMonitor : IDisposable
         timer.Tick += (_, _) => StartScan();
     }
 
-    public void Configure(AutoSwitchRule rule)
+    public void Configure(AutoSwitchSettings settings)
     {
-        ArgumentNullException.ThrowIfNull(rule);
+        ArgumentNullException.ThrowIfNull(settings);
         if (Volatile.Read(ref disposed) != 0) return;
-        var copy = rule.Copy();
         if (Environment.CurrentManagedThreadId != uiThreadId)
         {
-            uiContext.Post(_ => ConfigureOnUi(copy), null);
+            var copy = settings.Copy();
+            PostToUi(() => ConfigureOnUi(copy));
             return;
         }
-        ConfigureOnUi(copy);
+        ConfigureOnUi(settings);
     }
 
-    private void ConfigureOnUi(AutoSwitchRule next)
+    private void ConfigureOnUi(AutoSwitchSettings next)
     {
-        if (Volatile.Read(ref disposed) != 0) return;
-        if (rule is not null && rule.Enabled == next.Enabled &&
-            string.Equals(rule.ExecutablePath, next.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-            rule.RunningPresetId == next.RunningPresetId && rule.StoppedPresetId == next.StoppedPresetId)
-            return;
-
-        rule = next;
-        generation++;
-        lastKnownRunning = null;
-        lastObservation = null;
+        if (Volatile.Read(ref disposed) != 0 || !evaluator.Configure(next)) return;
         timer.Stop();
-        if (!next.Enabled)
-        {
-            Publish(new(null, "自动切换：已关闭"), null);
-            return;
-        }
-
-        Publish(new(null, "自动切换：等待检测程序状态…"), null);
+        Publish(evaluator.PendingObservation(), null);
+        if (Volatile.Read(ref disposed) != 0 || !evaluator.Plan.CanScan) return;
         timer.Start();
         StartScan();
     }
 
     private async void StartScan()
     {
-        if (Volatile.Read(ref disposed) != 0 || scanInProgress || rule is not { Enabled: true }) return;
+        if (Volatile.Read(ref disposed) != 0 || scanInProgress || !evaluator.Plan.CanScan) return;
         scanInProgress = true;
-        var scanGeneration = generation;
-        var path = rule.ExecutablePath;
-        ProcessObservation observation;
+        var scanGeneration = evaluator.Generation;
+        var plan = evaluator.Plan;
+        AutomationScanResult result;
         try
         {
-            observation = await Task.Run(() => ProcessDetector.Check(path)).ConfigureAwait(false);
+            result = await Task.Run(() => ProcessDetector.Check(plan)).ConfigureAwait(false);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
-            observation = new(null, $"自动切换：检测异常，暂不切换（{exception.Message}）");
+            // Exception messages may contain executable paths. Only named-game errors reach the UI.
+            result = AutomationScanResult.Unknown(plan.Rules.Length);
         }
         if (Volatile.Read(ref disposed) != 0) return;
-        try
-        {
-            uiContext.Post(_ => CompleteScan(scanGeneration, observation), null);
-        }
-        catch (InvalidAsynchronousStateException) when (Volatile.Read(ref disposed) != 0)
-        {
-            // The UI was destroyed between the disposal check and posting the result.
-        }
-        catch (InvalidOperationException) when (Volatile.Read(ref disposed) != 0)
-        {
-            // No result needs to be delivered after the monitor has been disposed.
-        }
+        PostToUi(() => CompleteScan(scanGeneration, result));
     }
 
-    private void CompleteScan(int scanGeneration, ProcessObservation observation)
+    private void CompleteScan(int scanGeneration, AutomationScanResult result)
     {
         if (Volatile.Read(ref disposed) != 0) return;
         scanInProgress = false;
-        if (scanGeneration != generation)
+        var evaluation = evaluator.Evaluate(scanGeneration, result);
+        if (evaluation is null)
         {
-            // A changed rule waits for the old scan instead of overlapping it.
+            // Changed configurations wait for the old worker rather than overlapping snapshots.
             StartScan();
             return;
         }
-        if (rule is not { Enabled: true }) return;
-
-        bool? switchToRunning = null;
-        if (observation.IsRunning is bool running)
-        {
-            if (running && lastKnownRunning != true) switchToRunning = true;
-            else if (!running && lastKnownRunning == true) switchToRunning = false;
-            lastKnownRunning = running;
-        }
-        Publish(observation, switchToRunning);
+        Publish(evaluation.Observation, evaluation.Transition);
     }
 
-    private void Publish(ProcessObservation observation, bool? switchToRunning)
+    private void Publish(AutomationObservation observation, AutomationTransition? transition)
     {
-        if (observation == lastObservation && switchToRunning is null) return;
+        if (observation == lastObservation && transition is null) return;
         lastObservation = observation;
-        report(observation, switchToRunning);
+        report(observation, transition);
+    }
+
+    private void PostToUi(Action action)
+    {
+        try
+        {
+            uiContext.Post(_ => action(), null);
+        }
+        catch (InvalidAsynchronousStateException) when (Volatile.Read(ref disposed) != 0)
+        {
+            // The UI was destroyed between disposal and posting the final callback.
+        }
+        catch (InvalidOperationException) when (Volatile.Read(ref disposed) != 0)
+        {
+            // No callbacks need delivery after the UI context has gone away.
+        }
     }
 
     public void Dispose()
@@ -290,7 +475,7 @@ internal sealed class ProcessMonitor : IDisposable
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         if (Environment.CurrentManagedThreadId != uiThreadId)
         {
-            uiContext.Post(_ => timer.Dispose(), null);
+            PostToUi(timer.Dispose);
             return;
         }
         timer.Dispose();

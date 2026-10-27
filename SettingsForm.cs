@@ -340,14 +340,14 @@ internal sealed class SettingsForm : DarkForm
 
     private void SaveSettings()
     {
-        var ruleError = automationSettings.CollectRule(out var rule);
+        var ruleError = automationSettings.CollectSettings(out var automation);
         if (ruleError is not null)
         {
             tabs.SelectedIndex = 1;
             MessageBox.Show(this, ruleError, "无法保存设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        draft.AutoSwitch = rule;
+        draft.AutoSwitch = automation;
         var error = save(draft, autoStartBox.Checked);
         if (error is not null)
         {

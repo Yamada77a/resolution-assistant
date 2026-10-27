@@ -3,252 +3,349 @@ namespace ResolutionAssistant;
 internal sealed class AutoSwitchSettingsControl : UserControl
 {
     private readonly List<Preset> presets;
+    private readonly AutoSwitchSettings draft;
     private readonly CheckBox enabledBox = new DarkCheckBox();
-    private readonly TextBox pathBox = new();
-    private readonly ComboBox runningPresetBox = new DarkComboBox();
-    private readonly ComboBox stoppedPresetBox = new DarkComboBox();
-    private readonly Label selectionNote = Theme.Label(string.Empty, 9);
+    private readonly Label libraryStatus = Theme.Label(string.Empty, 9);
+    private readonly Panel cardsViewport = new();
+    private readonly TableLayoutPanel cards = new();
 
-    public AutoSwitchSettingsControl(List<Preset> presets, AutoSwitchRule rule)
+    public AutoSwitchSettingsControl(List<Preset> presets, AutoSwitchSettings settings)
     {
         this.presets = presets;
+        draft = settings.Copy();
         Dock = DockStyle.Fill;
         BackColor = Theme.Background;
-        AutoScroll = true;
+
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
             Padding = new Padding(18),
             ColumnCount = 1,
-            RowCount = 10
+            RowCount = 5
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (int row = 0; row < layout.RowCount; row++)
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         Controls.Add(layout);
 
-        var heading = Theme.Label("让程序启动与退出，自动切换预设", 16, true);
+        var heading = Theme.Label("游戏卡片 · 自动切换", 16, true);
         heading.Dock = DockStyle.Fill;
         heading.Margin = new Padding(0, 0, 0, 8);
         layout.Controls.Add(heading, 0, 0);
-        var description = Theme.Label("仅切换 Windows 主显示器。选择一个程序的完整 EXE 路径，再指定运行和全部退出时使用的预设。", 9.5f);
+        var description = Theme.Label(
+            "按从上到下的优先级，使用首个正在运行且已启用的游戏卡片。游戏间直接接棒；所有已启用目标都确认退出后，才使用最后生效卡片的退出预设。", 9.5f);
         description.ForeColor = Theme.Muted;
         description.Dock = DockStyle.Fill;
-        description.Margin = new Padding(0, 0, 0, 18);
+        description.Margin = new Padding(0, 0, 0, 12);
         layout.Controls.Add(description, 0, 1);
 
-        enabledBox.Name = "AutoSwitchEnabled";
-        enabledBox.Text = "启用程序自动切换";
-        enabledBox.AccessibleName = enabledBox.Text;
-        enabledBox.AutoSize = true;
-        enabledBox.Checked = rule.Enabled;
-        enabledBox.Margin = new Padding(0, 0, 0, 18);
-        layout.Controls.Add(enabledBox, 0, 2);
-
-        var pathLabel = Theme.Label("程序 EXE 路径", 10, true);
-        pathLabel.Margin = new Padding(0, 0, 0, 6);
-        layout.Controls.Add(pathLabel, 0, 3);
-        var pathLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            AutoSize = true,
-            ColumnCount = 2,
-            RowCount = 1,
-            Margin = new Padding(0, 0, 0, 16)
-        };
-        pathLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pathLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        pathBox.Name = "AutoSwitchPath";
-        pathBox.AccessibleName = "自动切换程序 EXE 完整路径";
-        pathBox.Text = rule.ExecutablePath;
-        pathBox.Dock = DockStyle.Fill;
-        pathBox.Anchor = AnchorStyles.Left | AnchorStyles.Right;
-        pathBox.Margin = new Padding(0, 4, 10, 4);
-        var browseButton = Theme.Button("浏览...");
-        browseButton.Name = "BrowseProgram";
-        browseButton.AccessibleName = "浏览并选择程序 EXE";
-        browseButton.Margin = Padding.Empty;
-        browseButton.Click += (_, _) => BrowseProgram();
-        pathLayout.Controls.Add(pathBox, 0, 0);
-        pathLayout.Controls.Add(browseButton, 1, 0);
-        layout.Controls.Add(pathLayout, 0, 4);
-
-        var choices = new TableLayoutPanel
+        var toolbar = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
             ColumnCount = 2,
             RowCount = 2,
-            Margin = new Padding(0, 0, 0, 8)
+            Margin = new Padding(0, 0, 0, 10)
         };
-        choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        choices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        choices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var runningLabel = Theme.Label("程序运行时", 10, true);
-        runningLabel.Margin = new Padding(0, 0, 12, 6);
-        var stoppedLabel = Theme.Label("程序全部退出后", 10, true);
-        stoppedLabel.Margin = new Padding(0, 0, 0, 6);
-        choices.Controls.Add(runningLabel, 0, 0);
-        choices.Controls.Add(stoppedLabel, 1, 0);
-        ConfigurePresetBox(runningPresetBox, "RunningPreset", "程序运行时的预设");
-        ConfigurePresetBox(stoppedPresetBox, "StoppedPreset", "程序全部退出后的预设");
-        runningPresetBox.Margin = new Padding(0, 0, 12, 0);
-        stoppedPresetBox.Margin = Padding.Empty;
-        choices.Controls.Add(runningPresetBox, 0, 1);
-        choices.Controls.Add(stoppedPresetBox, 1, 1);
-        layout.Controls.Add(choices, 0, 5);
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        enabledBox.Name = "AutoSwitchEnabled";
+        enabledBox.Text = "启用游戏自动切换";
+        enabledBox.AccessibleName = enabledBox.Text;
+        enabledBox.AutoSize = true;
+        enabledBox.Anchor = AnchorStyles.Left;
+        enabledBox.Checked = draft.Enabled;
+        enabledBox.Margin = new Padding(0, 0, 12, 0);
+        enabledBox.CheckedChanged += (_, _) => UpdateLibraryStatus();
+        toolbar.Controls.Add(enabledBox, 0, 0);
+        var addButton = Theme.Button("添加游戏", true);
+        addButton.Name = "AddGameRule";
+        addButton.AccessibleName = "添加游戏卡片";
+        addButton.Margin = Padding.Empty;
+        addButton.Click += (_, _) => AddRule();
+        toolbar.Controls.Add(addButton, 1, 0);
+        libraryStatus.Dock = DockStyle.Fill;
+        libraryStatus.ForeColor = Theme.Muted;
+        libraryStatus.Margin = new Padding(0, 6, 0, 0);
+        toolbar.Controls.Add(libraryStatus, 0, 1);
+        toolbar.SetColumnSpan(libraryStatus, 2);
+        layout.Controls.Add(toolbar, 0, 2);
 
-        selectionNote.Dock = DockStyle.Fill;
-        selectionNote.ForeColor = Theme.Muted;
-        selectionNote.Margin = new Padding(0, 0, 0, 16);
-        layout.Controls.Add(selectionNote, 0, 6);
-        var behavior = Theme.Label(
-            "• 每约 1 秒按完整路径精确检测，不按程序名称匹配。\n" +
-            "• 启用或打开助手时，程序已运行也会应用运行预设；最后一个实例退出时才应用退出预设。\n" +
-            "• 仅在状态变化时切换一次，不持续强制模式；手动切换和全局快捷键仍可照常使用。\n" +
-            "• 权限不足或检测失败不会被当作程序退出；禁用监测或退出助手不会改变分辨率。", 9);
-        behavior.ForeColor = Theme.Muted;
-        behavior.Dock = DockStyle.Fill;
-        behavior.Margin = new Padding(0, 0, 0, 16);
-        layout.Controls.Add(behavior, 0, 7);
-        var warning = Theme.Label("注意：不校验显示器是否支持预设模式，切换失败或画面异常时不会自动恢复。请先确认预设适合你的主显示器。", 9);
-        warning.ForeColor = Theme.Accent;
-        warning.BackColor = Theme.WarningSurface;
-        warning.Padding = new Padding(12);
-        warning.Dock = DockStyle.Fill;
-        warning.Margin = Padding.Empty;
-        layout.Controls.Add(warning, 0, 8);
-        var draftNote = Theme.Label("修改仅在保存设置后生效；取消或关闭本窗口不影响当前监测。", 9);
-        draftNote.ForeColor = Theme.Muted;
-        draftNote.Dock = DockStyle.Fill;
-        draftNote.Margin = new Padding(0, 12, 0, 0);
-        layout.Controls.Add(draftNote, 0, 9);
+        cardsViewport.Dock = DockStyle.Fill;
+        cardsViewport.AutoScroll = true;
+        cardsViewport.BackColor = Theme.Background;
+        cardsViewport.Margin = Padding.Empty;
+        cardsViewport.AccessibleName = "可滚动的游戏卡片库";
+        Theme.StyleNativeScrollbars(cardsViewport);
+        cards.Name = "RuleCards";
+        cards.AccessibleName = "游戏自动切换卡片列表，靠前的优先";
+        cards.Dock = DockStyle.Top;
+        cards.AutoSize = true;
+        cards.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        cards.ColumnCount = 1;
+        cards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        cards.Margin = Padding.Empty;
+        cardsViewport.Controls.Add(cards);
+        layout.Controls.Add(cardsViewport, 0, 3);
 
-        // Only absent IDs get initial suggestions. A deleted configured ID remains visibly missing.
-        SetChoices(runningPresetBox, rule.RunningPresetId ?? presets.ElementAtOrDefault(1)?.Id ?? presets.FirstOrDefault()?.Id);
-        SetChoices(stoppedPresetBox, rule.StoppedPresetId ?? presets.FirstOrDefault()?.Id);
-        enabledBox.CheckedChanged += (_, _) => UpdateSelectionNote();
-        runningPresetBox.SelectedIndexChanged += (_, _) => UpdateSelectionNote();
-        stoppedPresetBox.SelectedIndexChanged += (_, _) => UpdateSelectionNote();
-        UpdateSelectionNote();
+        var note = Theme.Label(
+            "点击卡片编辑；上移 / 下移调整优先级。预设名称随预设页同步。\n" +
+            "检测不确定时保持当前状态；手动切换仍可使用，停用卡片或总开关不会应用退出预设。\n" +
+            "仅作用于主显示器，不校验模式支持情况且不会自动恢复。所有修改须“保存设置”才生效，取消全部丢弃。", 8.5f);
+        note.ForeColor = Theme.Muted;
+        note.Dock = DockStyle.Fill;
+        note.Margin = new Padding(0, 10, 0, 0);
+        layout.Controls.Add(note, 0, 4);
+        RebuildCards();
         Theme.StyleInputs(this);
     }
 
-    private static void ConfigurePresetBox(ComboBox box, string name, string accessibleName)
+    public void RefreshPresets() => RebuildCards();
+
+    private void UpdateLibraryStatus()
     {
-        box.Name = name;
-        box.AccessibleName = accessibleName;
-        box.DropDownStyle = ComboBoxStyle.DropDownList;
-        box.Dock = DockStyle.Fill;
-        box.IntegralHeight = false;
-        box.DropDownHeight = 240;
+        int enabledCount = draft.Rules.Count(rule => rule.Enabled);
+        libraryStatus.Text = $"{draft.Rules.Count} 张卡片 · {enabledCount} 张已启用" +
+            (enabledBox.Checked ? " · 从上到下优先" : " · 总开关已暂停，仍可编辑卡片");
     }
 
-    private void BrowseProgram()
+
+    private void RebuildCards(Guid? focusId = null)
     {
-        using var dialog = new OpenFileDialog
+        int scrollY = -cardsViewport.AutoScrollPosition.Y;
+        cards.SuspendLayout();
+        foreach (Control control in cards.Controls.Cast<Control>().ToArray())
+            control.Dispose();
+        cards.Controls.Clear();
+        cards.RowStyles.Clear();
+        cards.RowCount = Math.Max(1, draft.Rules.Count);
+        if (draft.Rules.Count == 0)
         {
-            Title = "选择要监测的程序",
-            Filter = "可执行程序 (*.exe)|*.exe",
-            CheckFileExists = true,
-            CheckPathExists = true,
-            Multiselect = false
-        };
-        if (dialog.ShowDialog(this) == DialogResult.OK)
-            pathBox.Text = dialog.FileName;
-    }
-
-    public void RefreshPresets()
-    {
-        var runningId = SelectedId(runningPresetBox);
-        var stoppedId = SelectedId(stoppedPresetBox);
-        SetChoices(runningPresetBox, runningId);
-        SetChoices(stoppedPresetBox, stoppedId);
-        UpdateSelectionNote();
-    }
-
-    private void SetChoices(ComboBox box, Guid? selectedId)
-    {
-        box.BeginUpdate();
-        try
-        {
-            box.Items.Clear();
-            box.Items.Add(new PresetChoice(null, "请选择预设"));
-            foreach (var preset in presets)
-                box.Items.Add(new PresetChoice(preset.Id, $"{preset.Name}  ·  {preset.ModeLabel}"));
-            var selectedIndex = selectedId.HasValue ? presets.FindIndex(preset => preset.Id == selectedId.Value) + 1 : 0;
-            if (selectedId.HasValue && selectedIndex == 0)
+            var empty = new TableLayoutPanel
             {
-                box.Items.Add(new PresetChoice(selectedId, "已删除的预设（请重新选择）"));
-                selectedIndex = box.Items.Count - 1;
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                ColumnCount = 1,
+                RowCount = 2,
+                BackColor = Theme.Surface,
+                Padding = new Padding(22),
+                Margin = Padding.Empty
+            };
+            empty.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var title = Theme.Label("你的游戏库还是空的", 13, true);
+            title.Dock = DockStyle.Fill;
+            title.Margin = new Padding(0, 0, 0, 8);
+            var hint = Theme.Label("点击“添加游戏”，为常玩的游戏设置运行与退出预设。程序位置仅在编辑窗口中配置。", 9.5f);
+            hint.ForeColor = Theme.Muted;
+            hint.Dock = DockStyle.Fill;
+            hint.Margin = Padding.Empty;
+            empty.Controls.Add(title, 0, 0);
+            empty.Controls.Add(hint, 0, 1);
+            cards.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            cards.Controls.Add(empty, 0, 0);
+            ScaleNewCard(empty);
+        }
+        else
+        {
+            for (int index = 0; index < draft.Rules.Count; index++)
+            {
+                var card = CreateCard(draft.Rules[index], index);
+                cards.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                cards.Controls.Add(card, 0, index);
+                ScaleNewCard(card);
             }
-            box.SelectedIndex = selectedIndex;
-            box.DropDownWidth = Math.Max(box.Width, box.Items.Cast<PresetChoice>()
-                .Max(choice => TextRenderer.MeasureText(choice.Label, box.Font).Width) + SystemInformation.VerticalScrollBarWidth + 20);
         }
-        finally
+        cards.ResumeLayout(true);
+        Theme.StyleInputs(cards);
+        UpdateLibraryStatus();
+        cardsViewport.AutoScrollPosition = new Point(0, scrollY);
+        if (focusId.HasValue)
         {
-            box.EndUpdate();
+            var target = cards.Controls.Find($"EditRule_{focusId.Value:N}", true).FirstOrDefault();
+            if (target is not null)
+            {
+                cardsViewport.ScrollControlIntoView(target);
+                target.Focus();
+            }
         }
     }
 
-    private static Guid? SelectedId(ComboBox box) => (box.SelectedItem as PresetChoice)?.Id;
-
-    private bool HasPreset(Guid? id) => id.HasValue && presets.Any(preset => preset.Id == id.Value);
-
-    private void UpdateSelectionNote()
+    private void ScaleNewCard(Control card)
     {
-        bool complete = HasPreset(SelectedId(runningPresetBox)) && HasPreset(SelectedId(stoppedPresetBox));
-        selectionNote.Text = complete
-            ? "预设名称与模式会随“预设与启动”页中的修改同步更新。"
-            : "预设未选择或已被删除：请重新选择两个预设，或禁用自动切换后保存。";
-        selectionNote.ForeColor = !complete && enabledBox.Checked ? Theme.Accent : Theme.Muted;
+        if (IsHandleCreated && DeviceDpi != 96)
+            card.Scale(new SizeF(DeviceDpi / 96f, DeviceDpi / 96f));
     }
 
-    public string? CollectRule(out AutoSwitchRule rule)
+    private Control CreateCard(AutoSwitchRule rule, int index)
     {
-        rule = new AutoSwitchRule
+        string id = rule.Id.ToString("N");
+        var card = new TableLayoutPanel
         {
-            Enabled = enabledBox.Checked,
-            ExecutablePath = pathBox.Text.Trim(),
-            RunningPresetId = SelectedId(runningPresetBox),
-            StoppedPresetId = SelectedId(stoppedPresetBox)
+            Name = $"Rule_{id}",
+            AccessibleName = $"优先级 {index + 1}，{rule.Name}，{(rule.Enabled ? "已启用" : "已暂停")}",
+            AccessibleRole = AccessibleRole.Grouping,
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            RowCount = 4,
+            BackColor = Theme.Surface,
+            Padding = new Padding(14, 12, 14, 10),
+            Margin = new Padding(0, 0, 0, 10),
+            Cursor = Cursors.Hand
         };
-        if (!rule.Enabled)
-            return null;
-        if (rule.ExecutablePath.Length == 0 || !Path.IsPathFullyQualified(rule.ExecutablePath))
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        for (int row = 0; row < card.RowCount; row++)
+            card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.Click += (_, _) => EditRule(rule.Id);
+        var name = Theme.Label(rule.Name, 12, true);
+        name.Name = $"Rule_{id}_Name";
+        name.Dock = DockStyle.Fill;
+        name.Margin = new Padding(0, 0, 12, 5);
+        name.Click += (_, _) => EditRule(rule.Id);
+        card.Controls.Add(name, 0, 0);
+        var toggle = new DarkCheckBox
         {
-            pathBox.Focus();
-            return "启用自动切换前，请填写完整的程序 EXE 路径（例如 C:\\Games\\Game.exe）。";
-        }
-        try
+            Name = $"ToggleRule_{id}",
+            Text = rule.Enabled ? "已启用" : "已暂停",
+            AccessibleName = $"启用游戏卡片 {rule.Name}",
+            AutoSize = true,
+            Checked = rule.Enabled,
+            Margin = new Padding(0, 0, 0, 5),
+            Anchor = AnchorStyles.Top | AnchorStyles.Right
+        };
+        toggle.CheckedChanged += (_, _) =>
         {
-            rule.ExecutablePath = Path.GetFullPath(rule.ExecutablePath);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException or System.Security.SecurityException)
+            rule.Enabled = toggle.Checked;
+            RebuildCards(rule.Id);
+        };
+        card.Controls.Add(toggle, 1, 0);
+        bool needsConfiguration = AutoSwitchRuleEditorForm.ValidateRule(rule, presets, out _) is not null;
+        var priority = Theme.Label($"优先级 {index + 1}" + (needsConfiguration ? "  ·  待配置，请点击编辑" : "  ·  配置完整"), 8.5f);
+        priority.Name = $"Rule_{id}_Priority";
+        priority.ForeColor = needsConfiguration ? Theme.Accent : Theme.Muted;
+        priority.Dock = DockStyle.Fill;
+        priority.Margin = new Padding(0, 0, 0, 7);
+        priority.Click += (_, _) => EditRule(rule.Id);
+        card.Controls.Add(priority, 0, 1);
+        card.SetColumnSpan(priority, 2);
+        var choices = Theme.Label($"运行  →  {PresetName(rule.RunningPresetId)}\n退出  →  {PresetName(rule.StoppedPresetId)}", 9);
+        choices.Name = $"Rule_{id}_Presets";
+        choices.ForeColor = Theme.Muted;
+        choices.Dock = DockStyle.Fill;
+        choices.Margin = new Padding(0, 0, 0, 10);
+        choices.Click += (_, _) => EditRule(rule.Id);
+        card.Controls.Add(choices, 0, 2);
+        card.SetColumnSpan(choices, 2);
+        var actions = new FlowLayoutPanel
         {
-            pathBox.Focus();
-            return $"程序路径无效：{ex.Message}";
-        }
-        if (!string.Equals(Path.GetExtension(rule.ExecutablePath), ".exe", StringComparison.OrdinalIgnoreCase))
-        {
-            pathBox.Focus();
-            return "自动切换程序的完整路径必须以 .exe 结尾。";
-        }
-        if (!HasPreset(rule.RunningPresetId) || !HasPreset(rule.StoppedPresetId))
-        {
-            (!HasPreset(rule.RunningPresetId) ? runningPresetBox : stoppedPresetBox).Focus();
-            return "运行时或全部退出后的预设未选择或已被删除。请重新选择现有预设，或禁用自动切换后保存。";
-        }
-        pathBox.Text = rule.ExecutablePath;
-        return null;
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+            Margin = Padding.Empty
+        };
+        actions.Click += (_, _) => EditRule(rule.Id);
+        AddCardAction(actions, "编辑卡片", $"EditRule_{id}", $"编辑游戏卡片 {rule.Name}", () => EditRule(rule.Id));
+        AddCardAction(actions, "上移 ↑", $"MoveRuleUp_{id}", $"提高 {rule.Name} 的优先级", () => MoveRule(rule.Id, -1), index > 0);
+        AddCardAction(actions, "下移 ↓", $"MoveRuleDown_{id}", $"降低 {rule.Name} 的优先级", () => MoveRule(rule.Id, 1), index < draft.Rules.Count - 1);
+        AddCardAction(actions, "删除", $"DeleteRule_{id}", $"删除游戏卡片 {rule.Name}", () => DeleteRule(rule.Id));
+        card.Controls.Add(actions, 0, 3);
+        card.SetColumnSpan(actions, 2);
+        return card;
     }
 
-    private sealed record PresetChoice(Guid? Id, string Label)
+    private static void AddCardAction(FlowLayoutPanel actions, string text, string name, string accessibleName, Action action, bool enabled = true)
     {
-        public override string ToString() => Label;
+        var button = Theme.Button(text);
+        button.Name = name;
+        button.AccessibleName = accessibleName;
+        button.Width = 94;
+        button.Enabled = enabled;
+        button.Margin = new Padding(0, 0, 8, 2);
+        button.Click += (_, _) => action();
+        actions.Controls.Add(button);
+    }
+
+    private string PresetName(Guid? id) => !id.HasValue
+        ? "未选择预设"
+        : presets.FirstOrDefault(preset => preset.Id == id.Value)?.Name ?? "已删除的预设（需重新选择）";
+
+    private void AddRule()
+    {
+        var rule = new AutoSwitchRule
+        {
+            RunningPresetId = presets.ElementAtOrDefault(1)?.Id ?? presets.FirstOrDefault()?.Id,
+            StoppedPresetId = presets.FirstOrDefault()?.Id
+        };
+        using var editor = new AutoSwitchRuleEditorForm(presets, rule);
+        if (editor.ShowDialog(this) != DialogResult.OK)
+            return;
+        draft.Rules.Add(editor.Result);
+        RebuildCards(rule.Id);
+    }
+
+    private void EditRule(Guid id)
+    {
+        int index = draft.Rules.FindIndex(rule => rule.Id == id);
+        if (index < 0)
+            return;
+        using var editor = new AutoSwitchRuleEditorForm(presets, draft.Rules[index]);
+        if (editor.ShowDialog(this) != DialogResult.OK)
+            return;
+        draft.Rules[index] = editor.Result;
+        RebuildCards(id);
+    }
+
+    private void DeleteRule(Guid id)
+    {
+        var rule = draft.Rules.FirstOrDefault(item => item.Id == id);
+        if (rule is null || MessageBox.Show(this, $"确定删除游戏卡片“{rule.Name}”吗？\n保存设置后才会生效。", "删除游戏卡片",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+        draft.Rules.Remove(rule);
+        RebuildCards();
+    }
+
+    private void MoveRule(Guid id, int offset)
+    {
+        int index = draft.Rules.FindIndex(rule => rule.Id == id);
+        int destination = index + offset;
+        if (index < 0 || destination < 0 || destination >= draft.Rules.Count)
+            return;
+        var rule = draft.Rules[index];
+        draft.Rules.RemoveAt(index);
+        draft.Rules.Insert(destination, rule);
+        RebuildCards(id);
+    }
+
+    public string? CollectSettings(out AutoSwitchSettings settings)
+    {
+        settings = draft.Copy();
+        settings.Enabled = enabledBox.Checked;
+        if (!settings.Enabled)
+            return null;
+        foreach (var rule in settings.Rules.Where(rule => rule.Enabled))
+        {
+            var error = AutoSwitchRuleEditorForm.ValidateRule(rule, presets, out var normalizedPath);
+            if (error is not null)
+            {
+                var card = cards.Controls.Find($"EditRule_{rule.Id:N}", true).FirstOrDefault();
+                if (card is not null)
+                {
+                    cardsViewport.ScrollControlIntoView(card);
+                    card.Focus();
+                }
+                return $"游戏卡片“{rule.Name}”需要配置：{error}\n请编辑此卡片，或暂停卡片 / 关闭总开关后保存。";
+            }
+            rule.ExecutablePath = normalizedPath;
+        }
+        return null;
     }
 }

@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>ResolutionAssistant</AssemblyName>
     <RootNamespace>ResolutionAssistant</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -17,4 +17,7 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+  </ItemGroup>
 </Project>

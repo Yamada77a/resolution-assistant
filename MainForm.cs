@@ -18,6 +18,7 @@ internal sealed class MainForm : DarkForm
     private readonly Label ruleBadge = Theme.Label("", 8);
     private readonly ToolTip hints = new();
     private Guid? selectedPresetId;
+    private Guid? activeRuleId;
     private readonly HotkeyService hotkeys;
     private readonly ProcessMonitor processMonitor;
     private bool exiting;
@@ -220,6 +221,7 @@ internal sealed class MainForm : DarkForm
         monitorHeader.Controls.Add(ruleBadge, 1, 0);
         monitorLayout.Controls.Add(monitorHeader, 0, 0);
         SetPanelLabel(ruleTarget);
+        ruleTarget.Name = "ActiveGame";
         monitorLayout.Controls.Add(ruleTarget, 0, 1);
         SetPanelLabel(automationStatus);
         automationStatus.Name = "AutomationStatus";
@@ -229,11 +231,13 @@ internal sealed class MainForm : DarkForm
         runCaption.ForeColor = Theme.Muted;
         monitorLayout.Controls.Add(runCaption, 0, 4);
         SetPanelLabel(runningRule);
+        runningRule.Name = "ActiveRunningPreset";
         monitorLayout.Controls.Add(runningRule, 0, 5);
         var stopCaption = Theme.Label("全部退出后恢复", 8);
         stopCaption.ForeColor = Theme.Muted;
         monitorLayout.Controls.Add(stopCaption, 0, 6);
         SetPanelLabel(stoppedRule);
+        stoppedRule.Name = "ActiveStoppedPreset";
         monitorLayout.Controls.Add(stoppedRule, 0, 7);
         var configure = Theme.Button("配置自动切换  ›");
         configure.Dock = DockStyle.Fill;
@@ -368,13 +372,17 @@ internal sealed class MainForm : DarkForm
 
     private void UpdateRuleSummary()
     {
-        var rule = config.AutoSwitch;
-        ruleBadge.Text = rule.Enabled ? "已启用" : "未启用";
-        ruleBadge.ForeColor = rule.Enabled ? Theme.Success : Theme.Muted;
-        ruleTarget.Text = string.IsNullOrWhiteSpace(rule.ExecutablePath) ? "尚未选择程序" : Path.GetFileName(rule.ExecutablePath);
-        hints.SetToolTip(ruleTarget, rule.ExecutablePath);
-        runningRule.Text = config.Presets.FirstOrDefault(p => p.Id == rule.RunningPresetId)?.Name ?? "未选择预设";
-        stoppedRule.Text = config.Presets.FirstOrDefault(p => p.Id == rule.StoppedPresetId)?.Name ?? "未选择预设";
+        var settings = config.AutoSwitch;
+        int enabled = settings.Rules.Count(rule => rule.Enabled);
+        var active = settings.Rules.FirstOrDefault(rule => rule.Id == activeRuleId);
+        ruleBadge.Text = !settings.Enabled ? "未启用" : enabled == 0 ? "无规则" : "已启用";
+        ruleBadge.ForeColor = settings.Enabled && enabled > 0 ? Theme.Success : Theme.Muted;
+        ruleTarget.Text = active?.Name ?? (settings.Rules.Count == 0 ? "尚未添加游戏" : $"已添加 {settings.Rules.Count} 个游戏 · {enabled} 个启用");
+        hints.SetToolTip(ruleTarget, active?.Name ?? "多个游戏同时运行时，按游戏卡片列表顺序优先匹配。");
+        runningRule.Text = active is null ? "按游戏卡片配置" :
+            config.Presets.FirstOrDefault(preset => preset.Id == active.RunningPresetId)?.Name ?? "预设已删除";
+        stoppedRule.Text = active is null ? "最后生效游戏的退出预设" :
+            config.Presets.FirstOrDefault(preset => preset.Id == active.StoppedPresetId)?.Name ?? "预设已删除";
         hints.SetToolTip(runningRule, runningRule.Text);
         hints.SetToolTip(stoppedRule, stoppedRule.Text);
     }
@@ -415,14 +423,20 @@ internal sealed class MainForm : DarkForm
         hints.SetToolTip(status, text);
     }
 
-    private void OnProcessObservation(ProcessObservation observation, bool? switchToRunning)
+    private void OnProcessObservation(AutomationObservation observation, AutomationTransition? transition)
     {
         if (automationStatus.Text != observation.Message) automationStatus.Text = observation.Message;
-        automationStatus.ForeColor = config.AutoSwitch.Enabled && observation.IsRunning is null
+        automationStatus.ForeColor = config.AutoSwitch.Enabled && config.AutoSwitch.Rules.Any(rule => rule.Enabled) && observation.IsRunning is null
             ? Theme.Error : observation.IsRunning == true ? Theme.Success : Theme.Muted;
         hints.SetToolTip(automationStatus, observation.Message);
-        if (switchToRunning is null) return;
-        var presetId = switchToRunning.Value ? config.AutoSwitch.RunningPresetId : config.AutoSwitch.StoppedPresetId;
+        if (activeRuleId != observation.ActiveRuleId)
+        {
+            activeRuleId = observation.ActiveRuleId;
+            UpdateRuleSummary();
+        }
+        if (transition is null) return;
+        var rule = config.AutoSwitch.Rules.FirstOrDefault(rule => rule.Id == transition.RuleId);
+        var presetId = transition.Running ? rule?.RunningPresetId : rule?.StoppedPresetId;
         var preset = config.Presets.FirstOrDefault(p => p.Id == presetId);
         if (preset is null)
         {

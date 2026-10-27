@@ -38,18 +38,39 @@ internal static class ConfigStore
                 presets.ValueKind != JsonValueKind.Array)
                 throw new InvalidDataException("配置必须包含 Presets 预设数组。");
 
-            // Check the source IDs: model initializers must not silently repair missing IDs.
-            foreach (var item in presets.EnumerateArray())
+            RequireNamedIds(presets, "预设");
+            bool legacyRule = false;
+            if (root.TryGetProperty(nameof(AppConfig.AutoSwitch), out var automation))
             {
-                if (item.ValueKind != JsonValueKind.Object ||
-                    !item.TryGetProperty(nameof(Preset.Id), out var id) ||
-                    id.ValueKind != JsonValueKind.String || !id.TryGetGuid(out var value) || value == Guid.Empty ||
-                    !item.TryGetProperty(nameof(Preset.Name), out var name) || name.ValueKind != JsonValueKind.String)
-                    throw new InvalidDataException("每个预设必须具有非空有效 ID 和非 null 名称。");
+                if (automation.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("程序自动切换设置必须为对象。");
+                if (automation.TryGetProperty(nameof(AutoSwitchSettings.Rules), out var rules))
+                {
+                    if (rules.ValueKind != JsonValueKind.Array)
+                        throw new InvalidDataException("游戏检测规则必须为数组。");
+                    RequireNamedIds(rules, "游戏检测规则");
+                }
+                else legacyRule = true;
             }
 
             var config = root.Deserialize<AppConfig>(JsonOptions)
                 ?? throw new InvalidDataException("配置内容不能为 null。");
+            if (legacyRule)
+            {
+                var previous = automation.Deserialize<AutoSwitchRule>(JsonOptions)
+                    ?? throw new InvalidDataException("旧程序检测规则不能为 null。");
+                if (previous.ExecutablePath is null)
+                    throw new InvalidDataException("旧程序检测路径不能为 null。");
+                if (previous.ExecutablePath.Length != 0 || previous.RunningPresetId.HasValue || previous.StoppedPresetId.HasValue)
+                {
+                    previous.Id = Guid.NewGuid();
+                    var name = Path.GetFileNameWithoutExtension(previous.ExecutablePath);
+                    previous.Name = string.IsNullOrWhiteSpace(name) ? "游戏 1" : name;
+                    previous.Enabled = true;
+                    config.AutoSwitch.Rules.Add(previous);
+                }
+            }
+            config.Version = 2;
             Validate(config);
             return config;
         }
@@ -82,11 +103,24 @@ internal static class ConfigStore
         }
     }
 
+    private static void RequireNamedIds(JsonElement items, string label)
+    {
+        // Model initializers must not silently repair missing IDs in persisted lists.
+        foreach (var item in items.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object ||
+                !item.TryGetProperty("Id", out var id) ||
+                id.ValueKind != JsonValueKind.String || !id.TryGetGuid(out var value) || value == Guid.Empty ||
+                !item.TryGetProperty("Name", out var name) || name.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException($"每个{label}必须具有非空有效 ID 和非 null 名称。");
+        }
+    }
+
     private static void Validate(AppConfig config)
     {
         if (config.Presets is null) throw new InvalidDataException("预设列表不能为 null。");
-        if (config.AutoSwitch is null || config.AutoSwitch.ExecutablePath is null)
-            throw new InvalidDataException("程序自动切换设置及其路径不能为 null。");
+        if (config.AutoSwitch?.Rules is null)
+            throw new InvalidDataException("程序自动切换设置及其规则列表不能为 null。");
         var ids = new HashSet<Guid>();
         foreach (var preset in config.Presets)
         {
@@ -94,6 +128,14 @@ internal static class ConfigStore
                 throw new InvalidDataException("预设及其名称不能为 null。");
             if (preset.Id == Guid.Empty || !ids.Add(preset.Id))
                 throw new InvalidDataException("预设 ID 必须非空且不能重复。");
+        }
+        ids.Clear();
+        foreach (var rule in config.AutoSwitch.Rules)
+        {
+            if (rule is null || rule.Name is null || rule.ExecutablePath is null)
+                throw new InvalidDataException("游戏规则、名称及其路径不能为 null。");
+            if (rule.Id == Guid.Empty || !ids.Add(rule.Id))
+                throw new InvalidDataException("游戏检测规则 ID 必须非空且不能重复。");
         }
     }
 }
