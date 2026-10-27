@@ -2,13 +2,13 @@ using System.Globalization;
 
 namespace ResolutionAssistant;
 
-internal sealed class SettingsForm : Form
+internal sealed class SettingsForm : DarkForm
 {
     private readonly AppConfig draft;
     private readonly Func<AppConfig, bool, string?> save;
     private readonly DataGridView grid = new();
-    private readonly CheckBox autoStartBox = new();
-    private readonly TabControl tabs = new();
+    private readonly CheckBox autoStartBox = new DarkCheckBox();
+    private readonly TabControl tabs = new DarkTabControl();
     private readonly AutoSwitchSettingsControl automationSettings;
     private readonly Label listStatus = Theme.Label(string.Empty, 9);
     private readonly Button editButton = Theme.Button("编辑");
@@ -16,7 +16,7 @@ internal sealed class SettingsForm : Form
     private readonly Button upButton = Theme.Button("上移 ↑");
     private readonly Button downButton = Theme.Button("下移 ↓");
 
-    public SettingsForm(AppConfig config, bool autoStart, Func<AppConfig, bool, string?> save)
+    public SettingsForm(AppConfig config, bool autoStart, Func<AppConfig, bool, string?> save, int initialTab = 0)
     {
         draft = config.Copy();
         this.save = save;
@@ -24,9 +24,10 @@ internal sealed class SettingsForm : Form
         Text = "设置";
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
+        ShowIcon = false;
         MinimizeBox = false;
-        ClientSize = new Size(880, 670);
-        MinimumSize = new Size(780, 620);
+        ClientSize = new Size(960, 760);
+        MinimumSize = new Size(860, 690);
         automationSettings = new AutoSwitchSettingsControl(draft.Presets, draft.AutoSwitch);
 
         var outerLayout = new TableLayoutPanel
@@ -39,7 +40,7 @@ internal sealed class SettingsForm : Form
         outerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         outerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         outerLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(outerLayout);
+        Content.Controls.Add(outerLayout);
         tabs.Name = "SettingsTabs";
         tabs.Dock = DockStyle.Fill;
         tabs.Margin = new Padding(0, 0, 0, 16);
@@ -132,8 +133,8 @@ internal sealed class SettingsForm : Form
         layout.Controls.Add(hotkeyNote, 0, 6);
 
         var warning = Theme.Label("注意：可保存任意数值（含 0），不校验显示器支持情况。切换不受支持的模式可能失败或造成画面异常；本程序不会自动恢复，请谨慎操作。", 9);
-        warning.ForeColor = Color.FromArgb(153, 87, 25);
-        warning.BackColor = Color.FromArgb(255, 247, 230);
+        warning.ForeColor = Theme.Accent;
+        warning.BackColor = Theme.WarningSurface;
         warning.Padding = new Padding(12);
         warning.Dock = DockStyle.Fill;
         warning.Margin = new Padding(0, 0, 0, 18);
@@ -167,15 +168,8 @@ internal sealed class SettingsForm : Form
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         ReloadRows(draft.Presets.FirstOrDefault()?.Id);
-    }
-
-    protected override void OnLoad(EventArgs e)
-    {
-        base.OnLoad(e);
-        var workingArea = Screen.FromControl(this).WorkingArea;
-        var available = new Size(Math.Max(1, workingArea.Width - 24), Math.Max(1, workingArea.Height - 24));
-        MinimumSize = new Size(Math.Min(MinimumSize.Width, available.Width), Math.Min(MinimumSize.Height, available.Height));
-        Size = new Size(Math.Min(Width, available.Width), Math.Min(Height, available.Height));
+        tabs.SelectedIndex = Math.Clamp(initialTab, 0, tabs.TabPages.Count - 1);
+        Theme.StyleInputs(Content);
     }
 
     private void ConfigureGrid()
@@ -198,7 +192,7 @@ internal sealed class SettingsForm : Form
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCells;
         grid.RowHeadersVisible = false;
-        grid.BorderStyle = BorderStyle.FixedSingle;
+        grid.BorderStyle = BorderStyle.None;
         grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
         grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
         grid.BackgroundColor = Theme.Surface;
@@ -207,9 +201,9 @@ internal sealed class SettingsForm : Form
         grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         grid.ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
         {
-            BackColor = Theme.Background,
+            BackColor = Theme.Raised,
             ForeColor = Theme.Muted,
-            SelectionBackColor = Theme.Background,
+            SelectionBackColor = Theme.Raised,
             SelectionForeColor = Theme.Muted,
             Padding = new Padding(10, 8, 10, 8),
             Font = Font
@@ -218,8 +212,8 @@ internal sealed class SettingsForm : Form
         {
             BackColor = Theme.Surface,
             ForeColor = Theme.Ink,
-            SelectionBackColor = Color.FromArgb(230, 237, 255),
-            SelectionForeColor = Theme.Ink,
+            SelectionBackColor = Theme.AccentSoft,
+            SelectionForeColor = Theme.Accent,
             Padding = new Padding(10, 8, 10, 8),
             Font = Font,
             WrapMode = DataGridViewTriState.True

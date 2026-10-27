@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace ResolutionAssistant;
 
-internal sealed class PresetEditorForm : Form
+internal sealed class PresetEditorForm : DarkForm
 {
     private readonly Preset original;
     private Preset result;
@@ -10,11 +10,11 @@ internal sealed class PresetEditorForm : Form
     private readonly TextBox widthBox = new() { Name = "PresetWidth" };
     private readonly TextBox heightBox = new() { Name = "PresetHeight" };
     private readonly TextBox refreshBox = new() { Name = "PresetRefresh" };
-    private readonly CheckBox ctrlBox = new() { Name = "HotkeyCtrl", Text = "Ctrl", AutoSize = true };
-    private readonly CheckBox altBox = new() { Name = "HotkeyAlt", Text = "Alt", AutoSize = true };
-    private readonly CheckBox shiftBox = new() { Name = "HotkeyShift", Text = "Shift", AutoSize = true };
-    private readonly CheckBox winBox = new() { Name = "HotkeyWin", Text = "Win", AutoSize = true };
-    private readonly ComboBox keyBox = new() { Name = "HotkeyKey", DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly CheckBox ctrlBox = new DarkCheckBox { Name = "HotkeyCtrl", Text = "Ctrl", AutoSize = true };
+    private readonly CheckBox altBox = new DarkCheckBox { Name = "HotkeyAlt", Text = "Alt", AutoSize = true };
+    private readonly CheckBox shiftBox = new DarkCheckBox { Name = "HotkeyShift", Text = "Shift", AutoSize = true };
+    private readonly CheckBox winBox = new DarkCheckBox { Name = "HotkeyWin", Text = "Win", AutoSize = true };
+    private readonly ComboBox keyBox = new DarkComboBox { Name = "HotkeyKey", DropDownStyle = ComboBoxStyle.DropDownList };
 
     public Preset Result => result.Copy();
 
@@ -26,10 +26,11 @@ internal sealed class PresetEditorForm : Form
         Text = preset is null ? "添加预设" : "编辑预设";
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
+        ShowIcon = false;
         MaximizeBox = false;
         MinimizeBox = false;
-        ClientSize = new Size(600, 650);
-        MinimumSize = new Size(560, 660);
+        ClientSize = new Size(640, 700);
+        MinimumSize = new Size(580, 660);
 
         var layout = new TableLayoutPanel
         {
@@ -45,7 +46,7 @@ internal sealed class PresetEditorForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(layout);
+        Content.Controls.Add(layout);
 
         var heading = Theme.Label(Text, 18, true);
         heading.Margin = new Padding(0, 0, 0, 8);
@@ -167,6 +168,7 @@ internal sealed class PresetEditorForm : Form
         layout.Controls.Add(buttons, 0, 5);
         AcceptButton = saveButton;
         CancelButton = cancelButton;
+        Theme.StyleInputs(Content);
         Shown += (_, _) =>
         {
             nameBox.Focus();

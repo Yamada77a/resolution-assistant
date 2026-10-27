@@ -3,10 +3,10 @@ namespace ResolutionAssistant;
 internal sealed class AutoSwitchSettingsControl : UserControl
 {
     private readonly List<Preset> presets;
-    private readonly CheckBox enabledBox = new();
+    private readonly CheckBox enabledBox = new DarkCheckBox();
     private readonly TextBox pathBox = new();
-    private readonly ComboBox runningPresetBox = new();
-    private readonly ComboBox stoppedPresetBox = new();
+    private readonly ComboBox runningPresetBox = new DarkComboBox();
+    private readonly ComboBox stoppedPresetBox = new DarkComboBox();
     private readonly Label selectionNote = Theme.Label(string.Empty, 9);
 
     public AutoSwitchSettingsControl(List<Preset> presets, AutoSwitchRule rule)
@@ -115,8 +115,8 @@ internal sealed class AutoSwitchSettingsControl : UserControl
         behavior.Margin = new Padding(0, 0, 0, 16);
         layout.Controls.Add(behavior, 0, 7);
         var warning = Theme.Label("注意：不校验显示器是否支持预设模式，切换失败或画面异常时不会自动恢复。请先确认预设适合你的主显示器。", 9);
-        warning.ForeColor = Color.FromArgb(153, 87, 25);
-        warning.BackColor = Color.FromArgb(255, 247, 230);
+        warning.ForeColor = Theme.Accent;
+        warning.BackColor = Theme.WarningSurface;
         warning.Padding = new Padding(12);
         warning.Dock = DockStyle.Fill;
         warning.Margin = Padding.Empty;
@@ -134,6 +134,7 @@ internal sealed class AutoSwitchSettingsControl : UserControl
         runningPresetBox.SelectedIndexChanged += (_, _) => UpdateSelectionNote();
         stoppedPresetBox.SelectedIndexChanged += (_, _) => UpdateSelectionNote();
         UpdateSelectionNote();
+        Theme.StyleInputs(this);
     }
 
     private static void ConfigurePresetBox(ComboBox box, string name, string accessibleName)
@@ -204,7 +205,7 @@ internal sealed class AutoSwitchSettingsControl : UserControl
         selectionNote.Text = complete
             ? "预设名称与模式会随“预设与启动”页中的修改同步更新。"
             : "预设未选择或已被删除：请重新选择两个预设，或禁用自动切换后保存。";
-        selectionNote.ForeColor = !complete && enabledBox.Checked ? Color.FromArgb(153, 87, 25) : Theme.Muted;
+        selectionNote.ForeColor = !complete && enabledBox.Checked ? Theme.Accent : Theme.Muted;
     }
 
     public string? CollectRule(out AutoSwitchRule rule)

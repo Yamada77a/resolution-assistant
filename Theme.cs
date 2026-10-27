@@ -4,12 +4,17 @@ namespace ResolutionAssistant;
 
 internal static class Theme
 {
-    public static readonly Color Background = Color.FromArgb(243, 246, 250);
-    public static readonly Color Surface = Color.White;
-    public static readonly Color Ink = Color.FromArgb(27, 39, 59);
-    public static readonly Color Muted = Color.FromArgb(103, 117, 137);
-    public static readonly Color Accent = Color.FromArgb(46, 91, 232);
-    public static readonly Color Border = Color.FromArgb(222, 228, 238);
+    public static readonly Color Background = Color.FromArgb(15, 21, 22);
+    public static readonly Color Surface = Color.FromArgb(22, 31, 32);
+    public static readonly Color Raised = Color.FromArgb(30, 41, 42);
+    public static readonly Color Ink = Color.FromArgb(234, 238, 232);
+    public static readonly Color Muted = Color.FromArgb(139, 158, 155);
+    public static readonly Color Accent = Color.FromArgb(255, 190, 78);
+    public static readonly Color AccentSoft = Color.FromArgb(66, 52, 30);
+    public static readonly Color Border = Color.FromArgb(50, 67, 66);
+    public static readonly Color Success = Color.FromArgb(105, 201, 162);
+    public static readonly Color Error = Color.FromArgb(242, 132, 118);
+    public static readonly Color WarningSurface = Color.FromArgb(47, 38, 25);
     public static Font Font(float size = 10, FontStyle style = FontStyle.Regular) => new("Microsoft YaHei UI", size, style);
     public static void Apply(Form form)
     {
@@ -19,29 +24,43 @@ internal static class Theme
         form.AutoScaleMode = AutoScaleMode.Dpi;
         form.StartPosition = FormStartPosition.CenterScreen;
     }
-    public static Button Button(string text, bool primary = false)
+    public static Button Button(string text, bool primary = false) => new AccentButton(primary)
     {
-        var b = new Button { Text = text, AutoSize = false, Height = 38, Width = 112,
-            FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand, Font = Font(9.5f),
-            BackColor = primary ? Accent : Surface, ForeColor = primary ? Color.White : Ink };
-        b.FlatAppearance.BorderSize = primary ? 0 : 1;
-        b.FlatAppearance.BorderColor = Border;
-        b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(34, 74, 207) : Color.FromArgb(234, 239, 250);
-        return b;
-    }
+        Text = text, Height = 38, Width = 112, Cursor = Cursors.Hand, Font = Font(9.5f)
+    };
     public static Label Label(string text, float size = 10, bool bold = false) => new()
     {
-        Text = text, AutoSize = true, Font = Font(size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = Ink
+        Text = text, AutoSize = true, UseMnemonic = false, Font = Font(size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = Ink,
+        BackColor = Color.Transparent
     };
+    public static void StyleInputs(Control root) => DarkControls.ApplyTree(root);
+    public static void StyleMenu(ContextMenuStrip menu)
+    {
+        menu.Renderer = new DarkMenuRenderer();
+        menu.BackColor = Surface;
+        menu.ForeColor = Ink;
+        menu.Font = Font(9.5f);
+    }
+    public static void StyleNativeScrollbars(Control control)
+    {
+        control.HandleCreated += (_, _) => SetWindowTheme(control.Handle, "DarkMode_Explorer", null);
+        if (control.IsHandleCreated) SetWindowTheme(control.Handle, "DarkMode_Explorer", null);
+    }
     public static Icon CreateIcon()
     {
         using var bitmap = new Bitmap(32, 32);
         using var g = Graphics.FromImage(bitmap);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Color.Transparent);
-        using var background = new SolidBrush(Accent);
-        g.FillRoundedRectangle(background, new Rectangle(0, 0, 32, 32), 7);
-        using var pen = new Pen(Color.White, 2);
+        using var background = new SolidBrush(Background);
+        using var path = new GraphicsPath();
+        path.AddArc(0, 0, 14, 14, 180, 90);
+        path.AddArc(18, 0, 14, 14, 270, 90);
+        path.AddArc(18, 18, 14, 14, 0, 90);
+        path.AddArc(0, 18, 14, 14, 90, 90);
+        path.CloseFigure();
+        g.FillPath(background, path);
+        using var pen = new Pen(Accent, 2);
         g.DrawRectangle(pen, 6, 7, 20, 14);
         g.DrawLine(pen, 16, 22, 16, 26);
         g.DrawLine(pen, 11, 26, 21, 26);
@@ -49,17 +68,8 @@ internal static class Theme
         try { return (Icon)Icon.FromHandle(handle).Clone(); }
         finally { DestroyIcon(handle); }
     }
-    private static void FillRoundedRectangle(this Graphics g, Brush brush, Rectangle r, int radius)
-    {
-        using var path = new GraphicsPath();
-        int d = radius * 2;
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        g.FillPath(brush, path);
-    }
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool DestroyIcon(IntPtr handle);
+    [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr window, string appName, string? idList);
 }

@@ -1,15 +1,23 @@
 namespace ResolutionAssistant;
 
-internal sealed class MainForm : Form
+internal sealed class MainForm : DarkForm
 {
     private AppConfig config;
     private readonly NotifyIcon tray;
     private readonly ContextMenuStrip trayMenu = new();
-    private readonly Label current = Theme.Label("正在读取显示设置…", 19, true);
+    private readonly Label current = Theme.Label("正在读取显示设置…", 23, true);
     private readonly Label status = Theme.Label("就绪 · 选择预设即可切换", 9);
     private readonly Label automationStatus = Theme.Label("自动切换：未启用", 9);
     private readonly Label count = Theme.Label("", 11, true);
     private readonly FlowLayoutPanel cards = new();
+    private readonly Button applySelected = Theme.Button("应用所选预设", true);
+    private readonly Label selectedSummary = Theme.Label("选择一个预设开始", 10, true);
+    private readonly Label ruleTarget = Theme.Label("", 10, true);
+    private readonly Label runningRule = Theme.Label("", 10, true);
+    private readonly Label stoppedRule = Theme.Label("", 10, true);
+    private readonly Label ruleBadge = Theme.Label("", 8);
+    private readonly ToolTip hints = new();
+    private Guid? selectedPresetId;
     private readonly HotkeyService hotkeys;
     private readonly ProcessMonitor processMonitor;
     private bool exiting;
@@ -27,12 +35,13 @@ internal sealed class MainForm : Form
         Text = "分辨率助手";
         Name = "MainForm";
         AccessibleName = "分辨率助手";
-        ClientSize = new Size(880, 680);
-        MinimumSize = new Size(680, 570);
+        ClientSize = new Size(1160, 790);
+        MinimumSize = new Size(980, 700);
         appIcon = Theme.CreateIcon();
         Icon = appIcon;
         BuildLayout();
         tray = new NotifyIcon { Text = "分辨率助手 · 快速切换", Icon = appIcon, ContextMenuStrip = trayMenu, Visible = true };
+        Theme.StyleMenu(trayMenu);
         tray.DoubleClick += (_, _) => ShowWindow();
         hotkeys = new HotkeyService(Handle);
         var error = hotkeys.Apply(config.Presets);
@@ -64,107 +73,260 @@ internal sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28, 22, 28, 16), ColumnCount = 1, RowCount = 7 };
-        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 114));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        Controls.Add(root);
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 132));
-        var title = Theme.Label("分辨率助手", 23, true);
-        title.Margin = Padding.Empty;
-        header.Controls.Add(title, 0, 0);
-        var subtitle = Theme.Label("让每一种使用场景，都有合适的显示模式。", 9);
-        subtitle.ForeColor = Theme.Muted;
-        header.Controls.Add(subtitle, 0, 1);
-        var settings = Theme.Button("设置与预设");
+        var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 174));
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        Content.Controls.Add(shell);
+
+        var sidebar = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = Color.FromArgb(11, 17, 18), Padding = new Padding(18, 26, 18, 18),
+            ColumnCount = 1, RowCount = 6, Margin = Padding.Empty
+        };
+        sidebar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 112));
+        for (int i = 0; i < 3; i++) sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        sidebar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        sidebar.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+        shell.Controls.Add(sidebar, 0, 0);
+        var brand = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Margin = Padding.Empty };
+        var mark = Theme.Label("R /", 27, true);
+        mark.ForeColor = Theme.Accent;
+        brand.Controls.Add(mark);
+        brand.Controls.Add(Theme.Label("分辨率助手", 13, true));
+        var englishBrand = Theme.Label("RESOLUTION STUDIO", 7);
+        englishBrand.ForeColor = Theme.Muted;
+        brand.Controls.Add(englishBrand);
+        sidebar.Controls.Add(brand, 0, 0);
+        var home = Theme.Button("◈   控制中心");
+        home.Dock = DockStyle.Fill;
+        home.BackColor = Theme.AccentSoft;
+        home.ForeColor = Theme.Accent;
+        home.Click += (_, _) => ShowWindow();
+        sidebar.Controls.Add(home, 0, 1);
+        var settings = Theme.Button("▤   预设管理");
         settings.Name = "OpenSettings";
         settings.AccessibleName = "设置与预设";
-        settings.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+        settings.Dock = DockStyle.Fill;
         settings.Click += (_, _) => OpenSettings();
-        header.Controls.Add(settings, 1, 0);
-        header.SetRowSpan(settings, 2);
+        sidebar.Controls.Add(settings, 0, 2);
+        var automatic = Theme.Button("◇   自动切换");
+        automatic.Name = "OpenAutomation";
+        automatic.AccessibleName = "程序自动切换设置";
+        automatic.Dock = DockStyle.Fill;
+        automatic.Click += (_, _) => OpenSettings(tab: 1);
+        sidebar.Controls.Add(automatic, 0, 3);
+        var version = Theme.Label($"本地运行 · 后台常驻\nv{Application.ProductVersion.Split('+')[0]}", 8);
+        version.ForeColor = Theme.Muted;
+        version.Dock = DockStyle.Fill;
+        version.TextAlign = ContentAlignment.BottomLeft;
+        sidebar.Controls.Add(version, 0, 5);
+
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(26, 18, 26, 16), ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
+        shell.Controls.Add(root, 1, 0);
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
+        var title = Theme.Label("显示控制中心", 22, true);
+        title.Margin = Padding.Empty;
+        header.Controls.Add(title, 0, 0);
+        var subtitle = Theme.Label("办公与游戏，自由切换你的显示节奏。", 9);
+        subtitle.ForeColor = Theme.Muted;
+        header.Controls.Add(subtitle, 0, 1);
+        var refresh = Theme.Button("刷新状态");
+        refresh.Name = "RefreshDisplay";
+        refresh.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+        refresh.Click += (_, _) => { RefreshCurrent(); SetStatus("已读取当前显示设置"); };
+        header.Controls.Add(refresh, 1, 0);
+        header.SetRowSpan(refresh, 2);
         root.Controls.Add(header, 0, 0);
 
-        var active = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Ink, Padding = new Padding(22, 14, 22, 14), Margin = new Padding(0, 8, 0, 0) };
-        var activeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 2 };
-        activeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        activeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-        var activeTitle = Theme.Label("当前显示模式  /  主显示器", 9);
-        activeTitle.ForeColor = Color.FromArgb(174, 191, 218);
-        activeLayout.Controls.Add(activeTitle, 0, 0);
-        current.ForeColor = Color.White;
-        current.Name = "CurrentMode";
+        var workspace = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        workspace.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 262));
+        workspace.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.Controls.Add(workspace, 0, 1);
+        var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
+        left.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 216));
+        left.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        workspace.Controls.Add(left, 0, 0);
+        var hero = new ModeHero { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(24, 26, 20, 20) };
+        var heroContent = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, BackColor = Color.Transparent };
+        heroContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        heroContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+        heroContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        heroContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        heroContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var modeTitle = Theme.Label("当前显示模式  /  PRIMARY DISPLAY", 8);
+        modeTitle.ForeColor = Theme.Muted;
+        heroContent.Controls.Add(modeTitle, 0, 0);
         current.AutoSize = false;
         current.Dock = DockStyle.Fill;
-        activeLayout.Controls.Add(current, 0, 1);
-        var refresh = Theme.Button("刷新状态");
-        refresh.Width = 100;
-        refresh.Click += (_, _) => { RefreshCurrent(); SetStatus("已读取当前显示设置"); };
-        activeLayout.Controls.Add(refresh, 1, 1);
-        active.Controls.Add(activeLayout);
-        root.Controls.Add(active, 0, 1);
-
-        var section = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(0, 20, 0, 0) };
+        current.Name = "CurrentMode";
+        current.AutoEllipsis = true;
+        heroContent.Controls.Add(current, 0, 1);
+        var heroHint = Theme.Label("用合适的比例，进入你的节奏。", 9);
+        heroHint.ForeColor = Theme.Muted;
+        heroContent.Controls.Add(heroHint, 0, 2);
+        var modeScope = Theme.Label("分辨率 / 刷新率     ·     当前会话生效", 8);
+        modeScope.ForeColor = Theme.Success;
+        modeScope.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+        heroContent.Controls.Add(modeScope, 0, 3);
+        hero.Controls.Add(heroContent);
+        left.Controls.Add(hero, 0, 0);
+        var section = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(0, 17, 0, 0), Margin = Padding.Empty };
         section.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        section.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        section.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
         count.Margin = Padding.Empty;
         section.Controls.Add(count, 0, 0);
-        var add = Theme.Button("＋ 新建预设", true);
+        var add = Theme.Button("＋ 新建预设");
         add.Height = 30;
-        add.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+        add.Width = 100;
         add.Name = "NewPreset";
         add.AccessibleName = "新建预设";
+        add.Anchor = AnchorStyles.Right | AnchorStyles.Top;
         add.Click += (_, _) => OpenSettings(true);
         section.Controls.Add(add, 1, 0);
-        root.Controls.Add(section, 0, 2);
+        left.Controls.Add(section, 0, 1);
         cards.Dock = DockStyle.Fill;
-        cards.FlowDirection = FlowDirection.LeftToRight;
         cards.WrapContents = true;
         cards.AutoScroll = true;
         cards.Margin = Padding.Empty;
         cards.Resize += (_, _) => ResizeCards();
-        root.Controls.Add(cards, 0, 3);
-        automationStatus.AutoSize = false;
-        automationStatus.Dock = DockStyle.Fill;
-        automationStatus.TextAlign = ContentAlignment.MiddleLeft;
-        automationStatus.AutoEllipsis = true;
+        Theme.StyleNativeScrollbars(cards);
+        left.Controls.Add(cards, 0, 2);
+
+        var monitor = SurfacePanel(new Padding(18));
+        monitor.Margin = new Padding(18, 0, 0, 0);
+        workspace.Controls.Add(monitor, 1, 0);
+        var monitorLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 12 };
+        monitorLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        int[] heights = [32, 44, 72, 16, 22, 38, 22, 38, 48, 20];
+        foreach (int height in heights) monitorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        monitorLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        monitorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+        var monitorHeader = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        monitorHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        monitorHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
+        monitorHeader.Controls.Add(Theme.Label("程序自动切换", 11, true), 0, 0);
+        ruleBadge.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        monitorHeader.Controls.Add(ruleBadge, 1, 0);
+        monitorLayout.Controls.Add(monitorHeader, 0, 0);
+        SetPanelLabel(ruleTarget);
+        monitorLayout.Controls.Add(ruleTarget, 0, 1);
+        SetPanelLabel(automationStatus);
         automationStatus.Name = "AutomationStatus";
-        root.Controls.Add(automationStatus, 0, 4);
+        monitorLayout.Controls.Add(automationStatus, 0, 2);
+        monitorLayout.Controls.Add(Divider(), 0, 3);
+        var runCaption = Theme.Label("程序运行时应用", 8);
+        runCaption.ForeColor = Theme.Muted;
+        monitorLayout.Controls.Add(runCaption, 0, 4);
+        SetPanelLabel(runningRule);
+        monitorLayout.Controls.Add(runningRule, 0, 5);
+        var stopCaption = Theme.Label("全部退出后恢复", 8);
+        stopCaption.ForeColor = Theme.Muted;
+        monitorLayout.Controls.Add(stopCaption, 0, 6);
+        SetPanelLabel(stoppedRule);
+        monitorLayout.Controls.Add(stoppedRule, 0, 7);
+        var configure = Theme.Button("配置自动切换  ›");
+        configure.Dock = DockStyle.Fill;
+        configure.Name = "ConfigureAutomation";
+        configure.Click += (_, _) => OpenSettings(tab: 1);
+        monitorLayout.Controls.Add(configure, 0, 8);
+        monitorLayout.Controls.Add(Divider(), 0, 9);
+        var monitorHint = Theme.Label("只在程序状态变化时切换\n手动操作不会被持续覆盖", 8.5f);
+        monitorHint.ForeColor = Theme.Muted;
+        monitorHint.Dock = DockStyle.Fill;
+        monitorHint.AutoSize = false;
+        monitorLayout.Controls.Add(monitorHint, 0, 10);
+        var local = Theme.Label("WINDOWS / 主显示器", 7.5f);
+        local.ForeColor = Theme.Muted;
+        monitorLayout.Controls.Add(local, 0, 11);
+        monitor.Controls.Add(monitorLayout);
+
+        var actionBar = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Padding = new Padding(0, 18, 0, 0), Margin = Padding.Empty };
+        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actionBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 224));
+        actionBar.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        actionBar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        selectedSummary.AutoSize = false;
+        selectedSummary.Dock = DockStyle.Fill;
+        selectedSummary.AutoEllipsis = true;
+        actionBar.Controls.Add(selectedSummary, 0, 0);
         status.AutoSize = false;
         status.Dock = DockStyle.Fill;
-        status.TextAlign = ContentAlignment.MiddleLeft;
         status.AutoEllipsis = true;
         status.Name = "Status";
-        root.Controls.Add(status, 0, 5);
-        var footer = Theme.Label("关闭窗口后继续驻留托盘  ·  自定义预设不受设备支持列表限制", 8.5f);
-        footer.ForeColor = Theme.Muted;
-        root.Controls.Add(footer, 0, 6);
+        actionBar.Controls.Add(status, 0, 1);
+        applySelected.Name = "ApplySelected";
+        applySelected.AccessibleName = "应用所选预设";
+        applySelected.Size = new Size(214, 52);
+        applySelected.Font = Theme.Font(12, FontStyle.Bold);
+        applySelected.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+        applySelected.Click += (_, _) =>
+        {
+            var preset = config.Presets.FirstOrDefault(p => p.Id == selectedPresetId);
+            if (preset != null) Switch(preset);
+        };
+        actionBar.Controls.Add(applySelected, 1, 0);
+        actionBar.SetRowSpan(applySelected, 2);
+        root.Controls.Add(actionBar, 0, 2);
+    }
+
+    private static void SetPanelLabel(Label label)
+    {
+        label.AutoSize = false;
+        label.Dock = DockStyle.Fill;
+        label.AutoEllipsis = true;
+    }
+
+    private static Panel Divider() => new() { BackColor = Theme.Border, Height = 1, Dock = DockStyle.Top, Margin = new Padding(0, 8, 0, 0) };
+
+    private static Panel SurfacePanel(Padding padding)
+    {
+        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = padding };
+        panel.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Theme.Border);
+            e.Graphics.DrawRectangle(pen, 0, 0, panel.Width - 1, panel.Height - 1);
+        };
+        return panel;
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        ResizeCards();
     }
 
     private void RenderPresets()
     {
         cards.SuspendLayout();
         while (cards.Controls.Count > 0) cards.Controls[0].Dispose();
-        count.Text = $"快速切换  ·  {config.Presets.Count} 个预设";
+        count.Text = $"我的预设  /  {config.Presets.Count:00}";
         if (config.Presets.Count == 0)
         {
             var empty = Theme.Label("还没有预设\n点击「新建预设」，保存你的第一个显示模式。", 11);
             empty.Padding = new Padding(12, 24, 0, 0);
             cards.Controls.Add(empty);
         }
-        foreach (var preset in config.Presets)
+        if (!config.Presets.Any(p => p.Id == selectedPresetId)) selectedPresetId = config.Presets.FirstOrDefault()?.Id;
+        for (int index = 0; index < config.Presets.Count; index++)
         {
-            var card = new PresetButton(preset) { Margin = new Padding(0, 0, 12, 12) };
+            var preset = config.Presets[index];
+            var card = new PresetTile(preset, index);
             card.Click += (_, _) => Switch(preset);
             cards.Controls.Add(card);
         }
+        UpdateSelection();
+        UpdateRuleSummary();
         ResizeCards();
         cards.ResumeLayout();
         trayMenu.Items.Clear();
@@ -183,16 +345,46 @@ internal sealed class MainForm : Form
 
     private void ResizeCards()
     {
-        int columns = cards.ClientSize.Width >= 620 ? 2 : 1;
-        int width = Math.Max(230, (cards.ClientSize.Width - SystemInformation.VerticalScrollBarWidth) / columns - 12);
+        int gap = Math.Max(8, 12 * DeviceDpi / 96);
+        int columns = cards.ClientSize.Width >= 550 * DeviceDpi / 96 ? 2 : 1;
+        int width = Math.Max(180, (cards.ClientSize.Width - SystemInformation.VerticalScrollBarWidth) / columns - gap);
         foreach (Control control in cards.Controls)
-            if (control is PresetButton) control.Width = width;
+        {
+            if (control is not PresetTile) continue;
+            control.Size = new Size(width, 166 * DeviceDpi / 96);
+            control.Margin = new Padding(0, 0, gap, gap);
+        }
+    }
+
+    private void UpdateSelection()
+    {
+        foreach (Control control in cards.Controls)
+            if (control is PresetTile tile) tile.Selected = tile.PresetId == selectedPresetId;
+        var preset = config.Presets.FirstOrDefault(p => p.Id == selectedPresetId);
+        applySelected.Enabled = preset != null;
+        selectedSummary.Text = preset is null ? "还没有预设 · 点击新建开始" : $"{preset.Name}  /  {preset.ModeLabel}";
+        hints.SetToolTip(selectedSummary, selectedSummary.Text);
+    }
+
+    private void UpdateRuleSummary()
+    {
+        var rule = config.AutoSwitch;
+        ruleBadge.Text = rule.Enabled ? "已启用" : "未启用";
+        ruleBadge.ForeColor = rule.Enabled ? Theme.Success : Theme.Muted;
+        ruleTarget.Text = string.IsNullOrWhiteSpace(rule.ExecutablePath) ? "尚未选择程序" : Path.GetFileName(rule.ExecutablePath);
+        hints.SetToolTip(ruleTarget, rule.ExecutablePath);
+        runningRule.Text = config.Presets.FirstOrDefault(p => p.Id == rule.RunningPresetId)?.Name ?? "未选择预设";
+        stoppedRule.Text = config.Presets.FirstOrDefault(p => p.Id == rule.StoppedPresetId)?.Name ?? "未选择预设";
+        hints.SetToolTip(runningRule, runningRule.Text);
+        hints.SetToolTip(stoppedRule, stoppedRule.Text);
     }
 
     private void Switch(Preset preset)
     {
         if (switching) return;
         switching = true;
+        selectedPresetId = preset.Id;
+        UpdateSelection();
         try
         {
             var result = DisplayService.Apply(preset);
@@ -219,14 +411,16 @@ internal sealed class MainForm : Form
     private void SetStatus(string text, bool error = false)
     {
         status.Text = text;
-        status.ForeColor = error ? Color.FromArgb(182, 57, 45) : Theme.Muted;
+        status.ForeColor = error ? Theme.Error : Theme.Muted;
+        hints.SetToolTip(status, text);
     }
 
     private void OnProcessObservation(ProcessObservation observation, bool? switchToRunning)
     {
         if (automationStatus.Text != observation.Message) automationStatus.Text = observation.Message;
         automationStatus.ForeColor = config.AutoSwitch.Enabled && observation.IsRunning is null
-            ? Color.FromArgb(182, 57, 45) : Theme.Muted;
+            ? Theme.Error : observation.IsRunning == true ? Theme.Success : Theme.Muted;
+        hints.SetToolTip(automationStatus, observation.Message);
         if (switchToRunning is null) return;
         var presetId = switchToRunning.Value ? config.AutoSwitch.RunningPresetId : config.AutoSwitch.StoppedPresetId;
         var preset = config.Presets.FirstOrDefault(p => p.Id == presetId);
@@ -238,14 +432,14 @@ internal sealed class MainForm : Form
         Switch(preset);
     }
 
-    private void OpenSettings(bool add = false)
+    private void OpenSettings(bool add = false, int tab = 0)
     {
         if (settingsOpen) return;
         ShowWindow();
         settingsOpen = true;
         try
         {
-            using var dialog = new SettingsForm(config, StartupService.IsEnabled(), SaveSettings);
+            using var dialog = new SettingsForm(config, StartupService.IsEnabled(), SaveSettings, tab);
             if (add)
             {
                 dialog.Shown += (_, _) =>
@@ -329,61 +523,10 @@ internal sealed class MainForm : Form
             tray.Dispose();
             trayMenu.Dispose();
             appIcon.Dispose();
+            hints.Dispose();
             resourcesDisposed = true;
         }
         base.Dispose(disposing);
     }
 }
 
-internal sealed class PresetButton : Button
-{
-    private readonly Preset preset;
-    private readonly Font titleFont = Theme.Font(11, FontStyle.Bold);
-    private readonly Font modeFont = Theme.Font(13);
-    private readonly Font subFont = Theme.Font(8.5f);
-    private readonly Pen normalBorder = new(Theme.Border);
-    private readonly Pen activeBorder = new(Theme.Accent);
-    private readonly string modeLabel;
-    private readonly string shortcutLabel;
-    private bool hover;
-    public PresetButton(Preset preset)
-    {
-        this.preset = preset;
-        modeLabel = preset.ModeLabel;
-        shortcutLabel = preset.VirtualKey == 0 ? "点击切换  ·  可在设置中添加快捷键" : preset.ShortcutLabel;
-        Height = 132;
-        FlatStyle = FlatStyle.Flat;
-        FlatAppearance.BorderSize = 0;
-        BackColor = Theme.Surface;
-        Cursor = Cursors.Hand;
-        AccessibleName = $"切换到 {preset.Name}，{preset.ModeLabel}，快捷键 {preset.ShortcutLabel}";
-        Name = $"Preset_{preset.Id:N}";
-        Text = preset.Name;
-        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-    }
-    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        e.Graphics.Clear(hover ? Color.FromArgb(235, 241, 255) : BackColor);
-        e.Graphics.DrawRectangle(hover || Focused ? activeBorder : normalBorder, 0, 0, Width - 1, Height - 1);
-        var flags = TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine;
-        TextRenderer.DrawText(e.Graphics, preset.Name, titleFont, new Rectangle(18, 15, Width - 55, 26), Theme.Ink, flags);
-        TextRenderer.DrawText(e.Graphics, "↗", titleFont, new Rectangle(Width - 34, 15, 22, 24), Theme.Accent, flags);
-        TextRenderer.DrawText(e.Graphics, modeLabel, modeFont, new Rectangle(18, 46, Width - 28, 30), Theme.Accent, flags);
-        TextRenderer.DrawText(e.Graphics, shortcutLabel, subFont, new Rectangle(18, 94, Width - 28, 22), Theme.Muted, flags);
-        if (Focused) ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(4, 4, Width - 8, Height - 8));
-    }
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            titleFont.Dispose();
-            modeFont.Dispose();
-            subFont.Dispose();
-            normalBorder.Dispose();
-            activeBorder.Dispose();
-        }
-        base.Dispose(disposing);
-    }
-}
