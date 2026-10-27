@@ -28,11 +28,26 @@ public sealed class Preset
     }
 }
 
+public sealed class AutoSwitchRule
+{
+    public bool Enabled { get; set; }
+    public string ExecutablePath { get; set; } = "";
+    public Guid? RunningPresetId { get; set; }
+    public Guid? StoppedPresetId { get; set; }
+    public AutoSwitchRule Copy() => (AutoSwitchRule)MemberwiseClone();
+}
+
 public sealed class AppConfig
 {
     public int Version { get; set; } = 1;
     public List<Preset> Presets { get; set; } = [];
-    public AppConfig Copy() => new() { Version = Version, Presets = Presets.Select(p => p.Copy()).ToList() };
+    public AutoSwitchRule AutoSwitch { get; set; } = new();
+    public AppConfig Copy() => new()
+    {
+        Version = Version,
+        Presets = Presets.Select(p => p.Copy()).ToList(),
+        AutoSwitch = AutoSwitch.Copy()
+    };
     public static AppConfig Defaults() => new()
     {
         Presets = [

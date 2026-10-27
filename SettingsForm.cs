@@ -8,6 +8,8 @@ internal sealed class SettingsForm : Form
     private readonly Func<AppConfig, bool, string?> save;
     private readonly DataGridView grid = new();
     private readonly CheckBox autoStartBox = new();
+    private readonly TabControl tabs = new();
+    private readonly AutoSwitchSettingsControl automationSettings;
     private readonly Label listStatus = Theme.Label(string.Empty, 9);
     private readonly Button editButton = Theme.Button("编辑");
     private readonly Button deleteButton = Theme.Button("删除");
@@ -19,27 +21,50 @@ internal sealed class SettingsForm : Form
         draft = config.Copy();
         this.save = save;
         Theme.Apply(this);
-        Text = "预设与启动设置";
+        Text = "设置";
         StartPosition = FormStartPosition.CenterParent;
         ShowInTaskbar = false;
         MinimizeBox = false;
         ClientSize = new Size(880, 670);
         MinimumSize = new Size(780, 620);
+        automationSettings = new AutoSwitchSettingsControl(draft.Presets, draft.AutoSwitch);
+
+        var outerLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(16),
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        outerLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        outerLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        outerLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        Controls.Add(outerLayout);
+        tabs.Name = "SettingsTabs";
+        tabs.Dock = DockStyle.Fill;
+        tabs.Margin = new Padding(0, 0, 0, 16);
+        var presetTab = new TabPage("预设与启动") { BackColor = Theme.Background, Padding = Padding.Empty };
+        var automationTab = new TabPage("程序自动切换") { BackColor = Theme.Background, Padding = Padding.Empty };
+        tabs.TabPages.Add(presetTab);
+        tabs.TabPages.Add(automationTab);
+        automationTab.Controls.Add(automationSettings);
+        outerLayout.Controls.Add(tabs, 0, 0);
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(24),
+            AutoScroll = true,
+            Padding = new Padding(18),
             ColumnCount = 1,
-            RowCount = 9
+            RowCount = 8
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        for (int row = 3; row < 9; row++)
+        for (int row = 3; row < 8; row++)
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(layout);
+        presetTab.Controls.Add(layout);
 
         var heading = Theme.Label("管理你的分辨率预设", 18, true);
         heading.Margin = new Padding(0, 0, 0, 8);
@@ -122,7 +147,7 @@ internal sealed class SettingsForm : Form
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
             Margin = Padding.Empty,
-            TabIndex = 3
+            TabIndex = 1
         };
         var cancelButton = Theme.Button("取消");
         cancelButton.Name = "CancelSettings";
@@ -132,16 +157,25 @@ internal sealed class SettingsForm : Form
         cancelButton.Margin = new Padding(10, 0, 0, 0);
         var saveButton = Theme.Button("保存设置", true);
         saveButton.Name = "SaveSettings";
-        saveButton.AccessibleName = "保存预设和启动设置";
+        saveButton.AccessibleName = "保存预设、启动和自动切换设置";
         saveButton.TabIndex = 0;
         saveButton.Margin = Padding.Empty;
         saveButton.Click += (_, _) => SaveSettings();
         footer.Controls.Add(cancelButton);
         footer.Controls.Add(saveButton);
-        layout.Controls.Add(footer, 0, 8);
+        outerLayout.Controls.Add(footer, 0, 1);
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         ReloadRows(draft.Presets.FirstOrDefault()?.Id);
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        var workingArea = Screen.FromControl(this).WorkingArea;
+        var available = new Size(Math.Max(1, workingArea.Width - 24), Math.Max(1, workingArea.Height - 24));
+        MinimumSize = new Size(Math.Min(MinimumSize.Width, available.Width), Math.Min(MinimumSize.Height, available.Height));
+        Size = new Size(Math.Min(Width, available.Width), Math.Min(Height, available.Height));
     }
 
     private void ConfigureGrid()
@@ -149,6 +183,7 @@ internal sealed class SettingsForm : Form
         grid.Dock = DockStyle.Fill;
         grid.Name = "PresetList";
         grid.Margin = Padding.Empty;
+        grid.MinimumSize = new Size(0, 120);
         grid.TabIndex = 0;
         grid.AccessibleName = "分辨率预设列表";
         grid.AccessibleDescription = "选择预设后可编辑、删除或调整顺序，双击可编辑。";
@@ -249,6 +284,7 @@ internal sealed class SettingsForm : Form
             ? "暂无预设。点击“添加预设”创建你的第一个自定义模式。"
             : $"共 {draft.Presets.Count} 个预设 · 双击编辑，使用上移 / 下移调整顺序";
         UpdateSelectionActions();
+        automationSettings.RefreshPresets();
     }
 
     private void UpdateSelectionActions()
@@ -310,6 +346,14 @@ internal sealed class SettingsForm : Form
 
     private void SaveSettings()
     {
+        var ruleError = automationSettings.CollectRule(out var rule);
+        if (ruleError is not null)
+        {
+            tabs.SelectedIndex = 1;
+            MessageBox.Show(this, ruleError, "无法保存设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        draft.AutoSwitch = rule;
         var error = save(draft, autoStartBox.Checked);
         if (error is not null)
         {

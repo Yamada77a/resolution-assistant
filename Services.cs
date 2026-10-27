@@ -85,6 +85,8 @@ internal static class ConfigStore
     private static void Validate(AppConfig config)
     {
         if (config.Presets is null) throw new InvalidDataException("预设列表不能为 null。");
+        if (config.AutoSwitch is null || config.AutoSwitch.ExecutablePath is null)
+            throw new InvalidDataException("程序自动切换设置及其路径不能为 null。");
         var ids = new HashSet<Guid>();
         foreach (var preset in config.Presets)
         {

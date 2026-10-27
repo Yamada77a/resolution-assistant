@@ -7,9 +7,11 @@ internal sealed class MainForm : Form
     private readonly ContextMenuStrip trayMenu = new();
     private readonly Label current = Theme.Label("正在读取显示设置…", 19, true);
     private readonly Label status = Theme.Label("就绪 · 选择预设即可切换", 9);
+    private readonly Label automationStatus = Theme.Label("自动切换：未启用", 9);
     private readonly Label count = Theme.Label("", 11, true);
     private readonly FlowLayoutPanel cards = new();
     private readonly HotkeyService hotkeys;
+    private readonly ProcessMonitor processMonitor;
     private bool exiting;
     private bool switching;
     private bool settingsOpen;
@@ -25,8 +27,8 @@ internal sealed class MainForm : Form
         Text = "分辨率助手";
         Name = "MainForm";
         AccessibleName = "分辨率助手";
-        ClientSize = new Size(880, 650);
-        MinimumSize = new Size(680, 540);
+        ClientSize = new Size(880, 680);
+        MinimumSize = new Size(680, 570);
         appIcon = Theme.CreateIcon();
         Icon = appIcon;
         BuildLayout();
@@ -50,6 +52,8 @@ internal sealed class MainForm : Form
             if (initialBackground) { initialBackground = false; Hide(); }
         };
         Activated += (_, _) => RefreshCurrent();
+        processMonitor = new ProcessMonitor(OnProcessObservation);
+        processMonitor.Configure(config.AutoSwitch);
     }
 
     protected override void SetVisibleCore(bool value)
@@ -60,12 +64,13 @@ internal sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28, 22, 28, 16), ColumnCount = 1, RowCount = 6 };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(28, 22, 28, 16), ColumnCount = 1, RowCount = 7 };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 114));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 37));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
         Controls.Add(root);
@@ -126,15 +131,21 @@ internal sealed class MainForm : Form
         cards.Margin = Padding.Empty;
         cards.Resize += (_, _) => ResizeCards();
         root.Controls.Add(cards, 0, 3);
+        automationStatus.AutoSize = false;
+        automationStatus.Dock = DockStyle.Fill;
+        automationStatus.TextAlign = ContentAlignment.MiddleLeft;
+        automationStatus.AutoEllipsis = true;
+        automationStatus.Name = "AutomationStatus";
+        root.Controls.Add(automationStatus, 0, 4);
         status.AutoSize = false;
         status.Dock = DockStyle.Fill;
         status.TextAlign = ContentAlignment.MiddleLeft;
         status.AutoEllipsis = true;
         status.Name = "Status";
-        root.Controls.Add(status, 0, 4);
+        root.Controls.Add(status, 0, 5);
         var footer = Theme.Label("关闭窗口后继续驻留托盘  ·  自定义预设不受设备支持列表限制", 8.5f);
         footer.ForeColor = Theme.Muted;
-        root.Controls.Add(footer, 0, 5);
+        root.Controls.Add(footer, 0, 6);
     }
 
     private void RenderPresets()
@@ -211,6 +222,22 @@ internal sealed class MainForm : Form
         status.ForeColor = error ? Color.FromArgb(182, 57, 45) : Theme.Muted;
     }
 
+    private void OnProcessObservation(ProcessObservation observation, bool? switchToRunning)
+    {
+        if (automationStatus.Text != observation.Message) automationStatus.Text = observation.Message;
+        automationStatus.ForeColor = config.AutoSwitch.Enabled && observation.IsRunning is null
+            ? Color.FromArgb(182, 57, 45) : Theme.Muted;
+        if (switchToRunning is null) return;
+        var presetId = switchToRunning.Value ? config.AutoSwitch.RunningPresetId : config.AutoSwitch.StoppedPresetId;
+        var preset = config.Presets.FirstOrDefault(p => p.Id == presetId);
+        if (preset is null)
+        {
+            SetStatus("自动切换失败：所选预设已不存在，请在设置中重新选择。", true);
+            return;
+        }
+        Switch(preset);
+    }
+
     private void OpenSettings(bool add = false)
     {
         if (settingsOpen) return;
@@ -260,7 +287,8 @@ internal sealed class MainForm : Form
         }
         config = draft.Copy();
         RenderPresets();
-        SetStatus("设置已保存 · 预设、托盘菜单与全局快捷键已同步");
+        SetStatus("设置已保存 · 预设、快捷键与程序检测已同步");
+        processMonitor.Configure(config.AutoSwitch);
         return null;
     }
 
@@ -286,6 +314,7 @@ internal sealed class MainForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         // Release HWND-bound hotkeys before Form destroys its native window.
+        processMonitor.Dispose();
         hotkeys.Dispose();
         base.OnFormClosed(e);
     }
@@ -294,6 +323,7 @@ internal sealed class MainForm : Form
     {
         if (disposing && !resourcesDisposed)
         {
+            processMonitor?.Dispose();
             hotkeys?.Dispose();
             tray.Visible = false;
             tray.Dispose();
