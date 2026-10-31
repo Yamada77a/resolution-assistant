@@ -70,3 +70,7 @@ dotnet run --project Tests/ResolutionAssistant.Regression.csproj -c Release
 ```
 
 覆盖多游戏优先级与接管、最后退出、多实例、完整路径匹配、不确定检测、手动覆盖、配置变更及旧配置迁移。回归使用独立临时配置，不操作显示模式或开机自启注册表。
+
+## 许可证
+
+[MIT](LICENSE)
